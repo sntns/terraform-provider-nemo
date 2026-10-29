@@ -7,8 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/cnabio/cnab-go/secrets/host"
+	"github.com/cnabio/cnab-go/valuesource"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -20,6 +24,7 @@ import (
 	"github.com/sntns/nemo/pkg/stack"
 	"github.com/sntns/nemo/pkg/storage"
 	"github.com/sntns/nemo/pkg/storage/volume"
+	"github.com/sntns/nemo/pkg/target"
 )
 
 // owner is the tool nemo records as the manager of the stacks the provider
@@ -114,7 +119,34 @@ func refreshInstallations(ctx context.Context, model *nemoStackResourceModel, pr
 	model.ID = model.Name
 }
 
+// redacted stands for a value the manifest does not show, as nemo's records
+// keep it.
+const redacted = "*******"
+
+// encodeManifest writes the manifest, its values redacted.
 func encodeManifest(manifest stack.Stack, diags *diag.Diagnostics) types.String {
+	redact := func(source *valuesource.Source) *valuesource.Source {
+		if source == nil || source.Key != host.SourceValue {
+			return source
+		}
+		return &valuesource.Source{Key: host.SourceValue, Value: redacted}
+	}
+	redactAll := func(strategies []valuesource.Strategy) []valuesource.Strategy {
+		var shown []valuesource.Strategy
+		for _, strategy := range strategies {
+			strategy.Source = *redact(&strategy.Source)
+			shown = append(shown, strategy)
+		}
+		return shown
+	}
+	manifest.Credentials = redactAll(manifest.Credentials)
+	manifest.Installations = slices.Clone(manifest.Installations)
+	for i, installation := range manifest.Installations {
+		manifest.Installations[i].Credentials = redactAll(installation.Credentials)
+	}
+	if tls := manifest.Target.TLS; tls != nil {
+		manifest.Target.TLS = &target.TLS{CA: redact(tls.CA), Cert: redact(tls.Cert), Key: redact(tls.Key)}
+	}
 	encoded, err := stack.Encode(manifest, stack.YAML)
 	if err != nil {
 		diags.AddError("nemo stack manifest failed", err.Error())

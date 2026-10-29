@@ -199,7 +199,7 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 			"manifest": schema.StringAttribute{
 				MarkdownDescription: "The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, " +
 					"its status and its logs, from where it reaches the target. Its paths are absolute, from where Terraform runs, " +
-					"and its credentials given by `value` are in it.",
+					"and its values are redacted, as nemo's records keep them: an action of nemo that needs one asks for it.",
 				Computed:  true,
 				Sensitive: true,
 			},

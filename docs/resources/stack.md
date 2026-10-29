@@ -105,7 +105,7 @@ output "manifest" {
 
 - `content_hash` (String) The SHA-256 of the installations' bundle files, in their order, computed at plan time: a bundle rebuilt at the same path changes it, and the next apply deploys it.
 - `id` (String) The stack's name.
-- `manifest` (String, Sensitive) The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, its status and its logs, from where it reaches the target. Its paths are absolute, from where Terraform runs, and its credentials given by `value` are in it.
+- `manifest` (String, Sensitive) The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, its status and its logs, from where it reaches the target. Its paths are absolute, from where Terraform runs, and its values are redacted, as nemo's records keep them: an action of nemo that needs one asks for it.
 
 <a id="nestedatt--installations"></a>
 ### Nested Schema for `installations`

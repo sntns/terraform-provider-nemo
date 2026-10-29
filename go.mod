@@ -4,6 +4,7 @@ go 1.26.8
 
 require (
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
+	github.com/hashicorp/terraform-plugin-framework-timeouts v0.7.0
 	github.com/hashicorp/terraform-plugin-framework-validators v0.19.0
 	github.com/sntns/nemo v0.4.0
 	github.com/stretchr/testify v1.12.1

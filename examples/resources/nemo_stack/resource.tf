@@ -47,6 +47,12 @@ resource "nemo_stack" "shop" {
     },
     { name = "frontend", version = "1.4.0" },
   ]
+
+  # nemo bounds each action by nemo-timeout, 5m unless parameters give another: this bounds a whole apply.
+  timeouts = {
+    create = "30m"
+    update = "30m"
+  }
 }
 
 # For nemo, from where it reaches the target: nemo stack import manifest.yaml

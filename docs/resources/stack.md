@@ -5,6 +5,7 @@ subcategory: ""
 description: |-
   A stack: bundles deployed together on one target, as nemo deploys a manifest with nemo up. Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, and uninstalls those it no longer lists. Reading it reads what the target runs, so that an installation changed by hand shows in the next plan. Destroying it uninstalls every installation.
   The records of its installations are kept on its target (records: target in nemo's manifest): nemo reads them from any machine that imported manifest, and refuses to write the stack without --force.
+  nemo bounds each action on an installation, by its nemo-timeout parameter: 5m unless the stack's parameters give another. timeouts bounds the whole operation on top of it; without it, Terraform waits as long as nemo does.
 ---
 
 # nemo_stack (Resource)
@@ -12,6 +13,8 @@ description: |-
 A stack: bundles deployed together on one target, as nemo deploys a manifest with `nemo up`. Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, and uninstalls those it no longer lists. Reading it reads what the target runs, so that an installation changed by hand shows in the next plan. Destroying it uninstalls every installation.
 
 The records of its installations are kept on its target (`records: target` in nemo's manifest): nemo reads them from any machine that imported `manifest`, and refuses to write the stack without `--force`.
+
+nemo bounds each action on an installation, by its `nemo-timeout` parameter: `5m` unless the stack's `parameters` give another. `timeouts` bounds the whole operation on top of it; without it, Terraform waits as long as nemo does.
 
 ## Example Usage
 
@@ -65,6 +68,12 @@ resource "nemo_stack" "shop" {
     },
     { name = "frontend", version = "1.4.0" },
   ]
+
+  # nemo bounds each action by nemo-timeout, 5m unless parameters give another: this bounds a whole apply.
+  timeouts = {
+    create = "30m"
+    update = "30m"
+  }
 }
 
 # For nemo, from where it reaches the target: nemo stack import manifest.yaml
@@ -90,6 +99,7 @@ output "manifest" {
 - `parameters` (Map of String) Parameters, by name, for every installation whose bundle declares them. An installation's own come over them.
 - `purge_on_destroy` (Boolean) Destroying the stack also removes its volumes, **data included**. Default: `false`, the volumes are kept for the next install.
 - `remote` (String) Where the bundles of the installations that give a version alone are: a template of `{{ .Component }}`, the installation's name, and `{{ .Version }}`, its version, such as `docker://ghcr.io/sntns/{{ .Component }}:{{ .Version }}`.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
 ### Read-Only
 
@@ -203,3 +213,38 @@ Optional:
 
 - `kubeconfig` (String) The kubeconfig of the cluster. Default: `KUBECONFIG`, `~/.kube/config`, else the cluster Terraform runs in.
 - `namespace` (String) The namespace of the Job.
+
+
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) How long the first apply may take, every installation included. Default: as long as nemo's actions take.
+- `delete` (String) How long destroying the stack may take. Default: as long as nemo's actions take.
+- `read` (String) How long reading the stack may take. Default: as long as it takes.
+- `update` (String) How long an apply may take, every installation included. Default: as long as nemo's actions take.
+
+## Import
+
+Import is supported using the following syntax:
+
+In Terraform v1.5.0 and later, the [`import` block](https://developer.hashicorp.com/terraform/language/import) can be used with the `id` attribute, for example:
+
+```terraform
+import {
+  to = nemo_stack.shop
+  id = "tcp://10.1.0.10:2376/shop"
+}
+```
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# A stack nemo deployed, on the environment's Docker (DOCKER_HOST, the current docker context)
+terraform import nemo_stack.shop shop
+
+# On another Docker: its address, then the stack's name
+terraform import nemo_stack.shop tcp://10.1.0.10:2376/shop
+```

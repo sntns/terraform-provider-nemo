@@ -2,8 +2,11 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"regexp"
+	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -18,7 +21,10 @@ import (
 	"github.com/sntns/nemo/pkg/target"
 )
 
-var _ resource.Resource = (*stackResource)(nil)
+var (
+	_ resource.Resource                = (*stackResource)(nil)
+	_ resource.ResourceWithImportState = (*stackResource)(nil)
+)
 
 // dockerName is what Docker accepts in the names nemo gives after the stack.
 var dockerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
@@ -33,14 +39,16 @@ func (r *stackResource) Metadata(_ context.Context, request resource.MetadataReq
 	response.TypeName = request.ProviderTypeName + "_stack"
 }
 
-func (r *stackResource) Schema(_ context.Context, _ resource.SchemaRequest, response *resource.SchemaResponse) {
+func (r *stackResource) Schema(ctx context.Context, _ resource.SchemaRequest, response *resource.SchemaResponse) {
 	response.Schema = schema.Schema{
 		MarkdownDescription: "A stack: bundles deployed together on one target, as nemo deploys a manifest with `nemo up`. " +
 			"Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, " +
 			"and uninstalls those it no longer lists. Reading it reads what the target runs, so that an installation changed by hand " +
 			"shows in the next plan. Destroying it uninstalls every installation.\n\n" +
 			"The records of its installations are kept on its target (`records: target` in nemo's manifest): " +
-			"nemo reads them from any machine that imported `manifest`, and refuses to write the stack without `--force`.",
+			"nemo reads them from any machine that imported `manifest`, and refuses to write the stack without `--force`.\n\n" +
+			"nemo bounds each action on an installation, by its `nemo-timeout` parameter: `5m` unless the stack's `parameters` give another. " +
+			"`timeouts` bounds the whole operation on top of it; without it, Terraform waits as long as nemo does.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "The stack's name.",
@@ -101,6 +109,13 @@ func (r *stackResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Computed:            true,
 				Default:             booldefault.StaticBool(false),
 			},
+			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
+				Create: true, Read: true, Update: true, Delete: true,
+				CreateDescription: "How long the first apply may take, every installation included. Default: as long as nemo's actions take.",
+				ReadDescription:   "How long reading the stack may take. Default: as long as it takes.",
+				UpdateDescription: "How long an apply may take, every installation included. Default: as long as nemo's actions take.",
+				DeleteDescription: "How long destroying the stack may take. Default: as long as nemo's actions take.",
+			}),
 			"manifest": schema.StringAttribute{
 				MarkdownDescription: "The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, " +
 					"its status and its logs, from where it reaches the target. Its credentials given by `value` are in it.",
@@ -220,6 +235,36 @@ func credentialsSchema(description string) schema.Attribute {
 			Validators: []validator.Object{oneSource{}},
 		},
 	}
+}
+
+// ImportState takes a stack nemo deployed: its name, after the address of
+// its Docker when the environment's is not the one, tcp://10.1.0.10:2376/shop.
+// Reading the stack then fills the rest from its records on the target.
+func (r *stackResource) ImportState(ctx context.Context, request resource.ImportStateRequest, response *resource.ImportStateResponse) {
+	host, name, err := importID(request.ID)
+	if err != nil {
+		response.Diagnostics.AddError("Invalid import ID", err.Error())
+		return
+	}
+	response.Diagnostics.Append(response.State.SetAttribute(ctx, path.Root("id"), name)...)
+	response.Diagnostics.Append(response.State.SetAttribute(ctx, path.Root("name"), name)...)
+	if host != "" {
+		response.Diagnostics.Append(response.State.SetAttribute(ctx, path.Root("target").AtName("host"), host)...)
+	}
+}
+
+// importID splits an import ID into the Docker's address and the stack's
+// name: NAME, or HOST/NAME.
+func importID(id string) (string, string, error) {
+	host, name := "", id
+	if strings.Contains(id, "://") {
+		index := strings.LastIndex(id, "/")
+		host, name = id[:index], id[index+1:]
+	}
+	if !dockerName.MatchString(name) {
+		return "", "", fmt.Errorf("%q: the stack's name, after the address of its Docker when the environment's is not the one: shop, or tcp://10.1.0.10:2376/shop", id)
+	}
+	return host, name, nil
 }
 
 // The resource's actions come once its schema is agreed on.

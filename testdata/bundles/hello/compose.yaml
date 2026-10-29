@@ -1,0 +1,6 @@
+x-nemo-bundle:
+  name: hello
+services:
+  web:
+    image: busybox:1.37
+    command: ["httpd", "-f", "-p", "8080", "-h", "/etc"]

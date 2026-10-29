@@ -23,3 +23,5 @@ resource "nemo_stack" "shop" {
 The stack keeps the records of its installations on its target: from any machine that imported its `manifest` output, `nemo status`, `nemo logs` and `nemo installation runs` read it. nemo writes it only with `--force`, which the next apply undoes.
 
 The resource is documented in [docs](docs), generated from its schema with `go generate ./...`; an example is in [examples](examples).
+
+`make test` runs the unit tests, and `make testacc` the acceptance tests, which deploy a stack on the environment's Docker with Compose.

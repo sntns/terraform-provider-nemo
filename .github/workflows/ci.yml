@@ -33,3 +33,16 @@ jobs:
         run: |
           go generate ./...
           git diff --exit-code docs || (echo "::error::run go generate ./... and commit docs" && exit 1)
+
+  acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - name: Deploy, import and destroy stacks on the runner's Docker
+        run: make testacc

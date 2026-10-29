@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
@@ -30,7 +31,11 @@ func TestNemoStackResource_schema(t *testing.T) {
 	NewNemoStackResource().Schema(context.Background(), fwresource.SchemaRequest{}, &resp)
 	assert.False(t, resp.Diagnostics.HasError(), resp.Diagnostics)
 	assert.False(t, resp.Schema.ValidateImplementation(context.Background()).HasError(), "a schema the framework serves")
-	assert.True(t, resp.Schema.Attributes["manifest"].IsSensitive(), "it holds the credentials given by value")
+	assert.True(t, resp.Schema.Attributes["manifest"].IsSensitive(), "it holds the sources of the credentials")
+	credential := resp.Schema.Attributes["credentials"].(schema.MapNestedAttribute).NestedObject.Attributes
+	assert.True(t, credential["value_wo"].IsWriteOnly(), "a credential's value can stay out of the state")
+	key := resp.Schema.Attributes["target"].(schema.SingleNestedAttribute).Attributes["tls"].(schema.SingleNestedAttribute).Attributes["key"].(schema.SingleNestedAttribute)
+	assert.NotContains(t, key.Attributes, "value_wo", "every operation reaches the target with its TLS")
 }
 
 // A stack on the environment's Docker, with Compose: created, its bundle

@@ -56,9 +56,19 @@ type nemoStackTargetModel struct {
 }
 
 type nemoStackTLSModel struct {
-	CA   *nemoStackSourceModel `tfsdk:"ca"`
-	Cert *nemoStackSourceModel `tfsdk:"cert"`
-	Key  *nemoStackSourceModel `tfsdk:"key"`
+	CA   *nemoStackTLSSourceModel `tfsdk:"ca"`
+	Cert *nemoStackTLSSourceModel `tfsdk:"cert"`
+	Key  *nemoStackTLSSourceModel `tfsdk:"key"`
+}
+
+// nemoStackTLSSourceModel is where a part of a TLS is read. Every operation
+// reaches the target with it, reading and destroying included, which have
+// the state alone: it is never write-only.
+type nemoStackTLSSourceModel struct {
+	Path    types.String `tfsdk:"path"`
+	Env     types.String `tfsdk:"env"`
+	Command types.String `tfsdk:"command"`
+	Value   types.String `tfsdk:"value"`
 }
 
 type nemoStackVolumeTypeModel struct {
@@ -97,12 +107,14 @@ type nemoStackInstallationModel struct {
 }
 
 // nemoStackSourceModel is where a credential, or a part of a TLS, is read:
-// one of a file, a variable, a command or a value.
+// one of a file, a variable, a command or a value, written-only or not.
 type nemoStackSourceModel struct {
-	Path    types.String `tfsdk:"path"`
-	Env     types.String `tfsdk:"env"`
-	Command types.String `tfsdk:"command"`
-	Value   types.String `tfsdk:"value"`
+	Path           types.String `tfsdk:"path"`
+	Env            types.String `tfsdk:"env"`
+	Command        types.String `tfsdk:"command"`
+	Value          types.String `tfsdk:"value"`
+	ValueWO        types.String `tfsdk:"value_wo"`
+	ValueWOVersion types.String `tfsdk:"value_wo_version"`
 }
 
 func NewNemoStackResource() resource.Resource {
@@ -199,7 +211,7 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 			"manifest": schema.StringAttribute{
 				MarkdownDescription: "The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, " +
 					"its status and its logs, from where it reaches the target. Its paths are absolute, from where Terraform runs, " +
-					"and its values are redacted, as nemo's records keep them: an action of nemo that needs one asks for it.",
+					"and its values, `value` or `value_wo`, are redacted, as nemo's records keep them: an action of nemo that needs one asks for it.",
 				Computed:  true,
 				Sensitive: true,
 			},
@@ -302,14 +314,29 @@ func installerSchema() schema.Attribute {
 
 // sourceAttributes are those of a source, as nemo reads a credential's:
 // exactly one of a file, a variable, a command or a value, read where
-// Terraform runs.
-func sourceAttributes() map[string]schema.Attribute {
-	return map[string]schema.Attribute{
+// Terraform runs; a credential's value can be write-only.
+func sourceAttributes(writeOnly bool) map[string]schema.Attribute {
+	attributes := map[string]schema.Attribute{
 		"path":    schema.StringAttribute{MarkdownDescription: "A file.", Optional: true},
 		"env":     schema.StringAttribute{MarkdownDescription: "An environment variable.", Optional: true},
 		"command": schema.StringAttribute{MarkdownDescription: "A command, whose output is the value.", Optional: true},
-		"value":   schema.StringAttribute{MarkdownDescription: "The value itself.", Optional: true, Sensitive: true},
+		"value":   schema.StringAttribute{MarkdownDescription: "The value itself, which the state keeps.", Optional: true, Sensitive: true},
 	}
+	if !writeOnly {
+		return attributes
+	}
+	attributes["value_wo"] = schema.StringAttribute{
+		MarkdownDescription: "The value itself, write-only: neither the plan nor the state keeps it, with Terraform 1.11 or later, from an ephemeral resource for instance. " +
+			"Terraform can't compare it: change `value_wo_version` to give a new one.",
+		Optional:  true,
+		WriteOnly: true,
+	}
+	attributes["value_wo_version"] = schema.StringAttribute{
+		MarkdownDescription: "Changed, the next apply gives `value_wo` again.",
+		Optional:            true,
+		Validators:          []validator.String{stringvalidator.AlsoRequires(path.MatchRelative().AtParent().AtName("value_wo"))},
+	}
+	return attributes
 }
 
 func sourceSchema(description string, required bool) schema.Attribute {
@@ -317,7 +344,7 @@ func sourceSchema(description string, required bool) schema.Attribute {
 		MarkdownDescription: description,
 		Optional:            !required,
 		Required:            required,
-		Attributes:          sourceAttributes(),
+		Attributes:          sourceAttributes(false),
 		Validators:          []validator.Object{oneSource{}},
 	}
 }
@@ -328,7 +355,7 @@ func credentialsSchema(description string) schema.Attribute {
 		MarkdownDescription: description + " Each is read where Terraform runs, from one source.",
 		Optional:            true,
 		NestedObject: schema.NestedAttributeObject{
-			Attributes: sourceAttributes(),
+			Attributes: sourceAttributes(true),
 			Validators: []validator.Object{oneSource{}},
 		},
 	}
@@ -351,11 +378,13 @@ func (r *nemoStackResource) ImportState(ctx context.Context, req resource.Import
 }
 
 func (r *nemoStackResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan nemoStackResourceModel
+	var plan, config nemoStackResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	copyWriteOnly(&plan, config)
 
 	ctx, cancel := bounded(ctx, plan.Timeouts.Create, &resp.Diagnostics)
 	defer cancel()
@@ -423,11 +452,13 @@ func (r *nemoStackResource) Read(ctx context.Context, req resource.ReadRequest, 
 }
 
 func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan nemoStackResourceModel
+	var plan, config nemoStackResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	copyWriteOnly(&plan, config)
 
 	ctx, cancel := bounded(ctx, plan.Timeouts.Update, &resp.Diagnostics)
 	defer cancel()

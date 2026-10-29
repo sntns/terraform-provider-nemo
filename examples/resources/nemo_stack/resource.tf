@@ -1,3 +1,9 @@
+# A secret that neither the plan nor the state keeps: an ephemeral value, given by value_wo.
+variable "database_password" {
+  type      = string
+  ephemeral = true
+}
+
 resource "nemo_stack" "shop" {
   name   = "shop"
   remote = "docker://registry.example.com/shop/{{ .Component }}:{{ .Version }}"
@@ -37,7 +43,8 @@ resource "nemo_stack" "shop" {
       name    = "database"
       version = "2.1.0"
       credentials = {
-        database-password = { env = "SHOP_DATABASE_PASSWORD" }
+        # Bump value_wo_version to give a new password: Terraform can't compare a write-only value.
+        database-password = { value_wo = var.database_password, value_wo_version = "1" }
       }
     },
     {

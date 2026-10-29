@@ -11,7 +11,7 @@ import (
 // oneSource checks that a credential, or a part of a TLS, is read from one source exactly.
 type oneSource struct{}
 
-var sources = []string{"path", "env", "command", "value"}
+var sources = []string{"path", "env", "command", "value", "value_wo"}
 
 func (oneSource) Description(context.Context) string {
 	return "exactly one of " + strings.Join(sources, ", ")

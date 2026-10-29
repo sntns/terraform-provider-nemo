@@ -19,6 +19,12 @@ nemo bounds each action on an installation, by its `nemo-timeout` parameter: `5m
 ## Example Usage
 
 ```terraform
+# A secret that neither the plan nor the state keeps: an ephemeral value, given by value_wo.
+variable "database_password" {
+  type      = string
+  ephemeral = true
+}
+
 resource "nemo_stack" "shop" {
   name   = "shop"
   remote = "docker://registry.example.com/shop/{{ .Component }}:{{ .Version }}"
@@ -58,7 +64,8 @@ resource "nemo_stack" "shop" {
       name    = "database"
       version = "2.1.0"
       credentials = {
-        database-password = { env = "SHOP_DATABASE_PASSWORD" }
+        # Bump value_wo_version to give a new password: Terraform can't compare a write-only value.
+        database-password = { value_wo = var.database_password, value_wo_version = "1" }
       }
     },
     {
@@ -105,7 +112,7 @@ output "manifest" {
 
 - `content_hash` (String) The SHA-256 of the installations' bundle files, in their order, computed at plan time: a bundle rebuilt at the same path changes it, and the next apply deploys it.
 - `id` (String) The stack's name.
-- `manifest` (String, Sensitive) The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, its status and its logs, from where it reaches the target. Its paths are absolute, from where Terraform runs, and its values are redacted, as nemo's records keep them: an action of nemo that needs one asks for it.
+- `manifest` (String, Sensitive) The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, its status and its logs, from where it reaches the target. Its paths are absolute, from where Terraform runs, and its values, `value` or `value_wo`, are redacted, as nemo's records keep them: an action of nemo that needs one asks for it.
 
 <a id="nestedatt--installations"></a>
 ### Nested Schema for `installations`
@@ -130,7 +137,9 @@ Optional:
 - `command` (String) A command, whose output is the value.
 - `env` (String) An environment variable.
 - `path` (String) A file.
-- `value` (String, Sensitive) The value itself.
+- `value` (String, Sensitive) The value itself, which the state keeps.
+- `value_wo` (String, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The value itself, write-only: neither the plan nor the state keeps it, with Terraform 1.11 or later, from an ephemeral resource for instance. Terraform can't compare it: change `value_wo_version` to give a new one.
+- `value_wo_version` (String) Changed, the next apply gives `value_wo` again.
 
 
 
@@ -166,7 +175,7 @@ Optional:
 - `command` (String) A command, whose output is the value.
 - `env` (String) An environment variable.
 - `path` (String) A file.
-- `value` (String, Sensitive) The value itself.
+- `value` (String, Sensitive) The value itself, which the state keeps.
 
 
 <a id="nestedatt--target--tls--cert"></a>
@@ -177,7 +186,7 @@ Optional:
 - `command` (String) A command, whose output is the value.
 - `env` (String) An environment variable.
 - `path` (String) A file.
-- `value` (String, Sensitive) The value itself.
+- `value` (String, Sensitive) The value itself, which the state keeps.
 
 
 <a id="nestedatt--target--tls--key"></a>
@@ -188,7 +197,7 @@ Optional:
 - `command` (String) A command, whose output is the value.
 - `env` (String) An environment variable.
 - `path` (String) A file.
-- `value` (String, Sensitive) The value itself.
+- `value` (String, Sensitive) The value itself, which the state keeps.
 
 
 
@@ -229,7 +238,9 @@ Optional:
 - `command` (String) A command, whose output is the value.
 - `env` (String) An environment variable.
 - `path` (String) A file.
-- `value` (String, Sensitive) The value itself.
+- `value` (String, Sensitive) The value itself, which the state keeps.
+- `value_wo` (String, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The value itself, write-only: neither the plan nor the state keeps it, with Terraform 1.11 or later, from an ephemeral resource for instance. Terraform can't compare it: change `value_wo_version` to give a new one.
+- `value_wo_version` (String) Changed, the next apply gives `value_wo` again.
 
 
 <a id="nestedatt--installer"></a>

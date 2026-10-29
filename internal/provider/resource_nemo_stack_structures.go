@@ -80,7 +80,7 @@ func expandTarget(ctx context.Context, model *nemoStackTargetModel, directory st
 		},
 	}
 	if tls := model.TLS; tls != nil {
-		given.TLS = &target.TLS{CA: expandSource(tls.CA, directory), Cert: expandSource(tls.Cert, directory), Key: expandSource(tls.Key, directory)}
+		given.TLS = &target.TLS{CA: expandSource(tls.CA.source(), directory), Cert: expandSource(tls.Cert.source(), directory), Key: expandSource(tls.Key.source(), directory)}
 	}
 	for name, volume := range model.Volumes {
 		if given.Volumes == nil {
@@ -111,18 +111,49 @@ func expandInstaller(model *nemoStackInstallerModel) target.Installer {
 }
 
 // expandSource is the one source the validator lets the model give, a path
-// made absolute from directory.
+// made absolute from directory. A source without any is write-only: its
+// value is known while Terraform applies the configuration alone, as nemo's
+// records keep it otherwise.
 func expandSource(model *nemoStackSourceModel, directory string) *valuesource.Source {
 	if model == nil {
 		return nil
 	}
-	for key, value := range map[string]types.String{host.SourcePath: model.Path, host.SourceEnv: model.Env, host.SourceCommand: model.Command, host.SourceValue: model.Value} {
-		if !value.IsNull() {
-			source := credentials.Absolute(valuesource.Strategy{Source: valuesource.Source{Key: key, Value: value.ValueString()}}, directory).Source
+	sources := []struct {
+		key   string
+		value types.String
+	}{{host.SourcePath, model.Path}, {host.SourceEnv, model.Env}, {host.SourceCommand, model.Command}, {host.SourceValue, model.Value}, {host.SourceValue, model.ValueWO}}
+	for _, given := range sources {
+		if !given.value.IsNull() {
+			source := credentials.Absolute(valuesource.Strategy{Source: valuesource.Source{Key: given.key, Value: given.value.ValueString()}}, directory).Source
 			return &source
 		}
 	}
-	return nil
+	return &valuesource.Source{Key: host.SourceValue, Value: redacted}
+}
+
+// copyWriteOnly gives the plan the write-only values of the configuration,
+// which the plan holds as null.
+func copyWriteOnly(plan *nemoStackResourceModel, config nemoStackResourceModel) {
+	copySources := func(planned, configured map[string]nemoStackSourceModel) {
+		for name, source := range planned {
+			source.ValueWO = configured[name].ValueWO
+			planned[name] = source
+		}
+	}
+	copySources(plan.Credentials, config.Credentials)
+	for i := range plan.Installations {
+		if i < len(config.Installations) {
+			copySources(plan.Installations[i].Credentials, config.Installations[i].Credentials)
+		}
+	}
+}
+
+// source is the part of a TLS as a source of a credential is.
+func (model *nemoStackTLSSourceModel) source() *nemoStackSourceModel {
+	if model == nil {
+		return nil
+	}
+	return &nemoStackSourceModel{Path: model.Path, Env: model.Env, Command: model.Command, Value: model.Value, ValueWO: types.StringNull(), ValueWOVersion: types.StringNull()}
 }
 
 // expandCredentials are the credentials as nemo reads them, by name.
@@ -156,7 +187,7 @@ func flattenTarget(ctx context.Context, given target.Target, diags *diag.Diagnos
 		Images:       types.StringValue(cmp.Or(given.Images, target.ImagesRegistry)),
 	}
 	if tls := given.TLS; tls != nil {
-		model.TLS = &nemoStackTLSModel{CA: flattenSource(tls.CA), Cert: flattenSource(tls.Cert), Key: flattenSource(tls.Key)}
+		model.TLS = &nemoStackTLSModel{CA: flattenTLSSource(tls.CA), Cert: flattenTLSSource(tls.Cert), Key: flattenTLSSource(tls.Key)}
 	}
 	for name, volume := range given.Volumes {
 		if model.Volumes == nil {
@@ -215,7 +246,7 @@ func flattenSource(source *valuesource.Source) *nemoStackSourceModel {
 	if source == nil {
 		return nil
 	}
-	model := &nemoStackSourceModel{Path: types.StringNull(), Env: types.StringNull(), Command: types.StringNull(), Value: types.StringNull()}
+	model := &nemoStackSourceModel{Path: types.StringNull(), Env: types.StringNull(), Command: types.StringNull(), Value: types.StringNull(), ValueWO: types.StringNull(), ValueWOVersion: types.StringNull()}
 	value := types.StringValue(source.Value)
 	switch source.Key {
 	case host.SourcePath:
@@ -228,6 +259,14 @@ func flattenSource(source *valuesource.Source) *nemoStackSourceModel {
 		model.Value = value
 	}
 	return model
+}
+
+func flattenTLSSource(source *valuesource.Source) *nemoStackTLSSourceModel {
+	model := flattenSource(source)
+	if model == nil {
+		return nil
+	}
+	return &nemoStackTLSSourceModel{Path: model.Path, Env: model.Env, Command: model.Command, Value: model.Value}
 }
 
 func flattenStrings(ctx context.Context, values map[string]string, diags *diag.Diagnostics) types.Map {

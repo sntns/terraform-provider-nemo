@@ -6,9 +6,9 @@ resource "nemo_stack" "shop" {
     orchestrator = "swarm"
     host         = "tcp://10.1.0.10:2376"
     tls = {
-      ca   = file("pki/ca.pem")
-      cert = file("pki/deployer.pem")
-      key  = file("pki/deployer-key.pem")
+      ca   = { path = "certs/ca.pem" }
+      cert = { path = "certs/cert.pem" }
+      key  = { env = "DOCKER_KEY" }
     }
     volumes = {
       data = {
@@ -28,8 +28,8 @@ resource "nemo_stack" "shop" {
   }
 
   credentials = {
-    tls-certificate = { value = file("pki/shop.pem") }
-    tls-key         = { value = file("pki/shop-key.pem") }
+    tls-certificate = { path = "certs/shop.pem" }
+    tls-key         = { env = "SHOP_TLS_KEY" }
   }
 
   installations = [

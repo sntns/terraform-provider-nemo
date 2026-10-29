@@ -27,9 +27,9 @@ resource "nemo_stack" "shop" {
     orchestrator = "swarm"
     host         = "tcp://10.1.0.10:2376"
     tls = {
-      ca   = file("pki/ca.pem")
-      cert = file("pki/deployer.pem")
-      key  = file("pki/deployer-key.pem")
+      ca   = { path = "certs/ca.pem" }
+      cert = { path = "certs/cert.pem" }
+      key  = { env = "DOCKER_KEY" }
     }
     volumes = {
       data = {
@@ -49,8 +49,8 @@ resource "nemo_stack" "shop" {
   }
 
   credentials = {
-    tls-certificate = { value = file("pki/shop.pem") }
-    tls-key         = { value = file("pki/shop-key.pem") }
+    tls-certificate = { path = "certs/shop.pem" }
+    tls-key         = { env = "SHOP_TLS_KEY" }
   }
 
   installations = [
@@ -145,17 +145,50 @@ Optional:
 - `context` (String) A docker context to reach the target with, instead of `host`.
 - `host` (String) The address of the target's Docker: `tcp://`, `ssh://user@host` or `unix://`. With neither `host` nor `context`, the environment's: `DOCKER_HOST`, the current docker context, or the local socket.
 - `images` (String) How the images reach the target: `registry`, which each node pulls them from, or `load`, into its one daemon. Default: `registry`.
-- `tls` (Attributes) The TLS of a `tcp://` host, in PEM: the CA that signed the daemon's certificate, and the client's certificate and key. They are not in `manifest`: nemo reaches the target as its user's environment says. (see [below for nested schema](#nestedatt--target--tls))
+- `tls` (Attributes) The TLS of a `tcp://` host, in PEM, instead of `DOCKER_CERT_PATH` and `DOCKER_TLS_VERIFY`. Each part is read from a source, as a credential is, and the manifest keeps the source. (see [below for nested schema](#nestedatt--target--tls))
 - `volumes` (Attributes Map) The target's volume types, by name: what a volume of a bundle with that `x-nemo-volume` type is made of. The driver, its options and the provisioned directory are templates of `{{.Stack}}`, `{{.Name}}` and `{{.Options}}`. (see [below for nested schema](#nestedatt--target--volumes))
 
 <a id="nestedatt--target--tls"></a>
 ### Nested Schema for `target.tls`
 
-Required:
+Optional:
 
-- `ca` (String) The CA's certificate.
-- `cert` (String) The client's certificate.
-- `key` (String, Sensitive) The client's key.
+- `ca` (Attributes) The CA of the daemon's certificate. Default: the system's. (see [below for nested schema](#nestedatt--target--tls--ca))
+- `cert` (Attributes) The client's certificate, with its key. (see [below for nested schema](#nestedatt--target--tls--cert))
+- `key` (Attributes) The client's key, with its certificate. (see [below for nested schema](#nestedatt--target--tls--key))
+
+<a id="nestedatt--target--tls--ca"></a>
+### Nested Schema for `target.tls.ca`
+
+Optional:
+
+- `command` (String) A command, whose output is the value.
+- `env` (String) An environment variable.
+- `path` (String) A file.
+- `value` (String, Sensitive) The value itself.
+
+
+<a id="nestedatt--target--tls--cert"></a>
+### Nested Schema for `target.tls.cert`
+
+Optional:
+
+- `command` (String) A command, whose output is the value.
+- `env` (String) An environment variable.
+- `path` (String) A file.
+- `value` (String, Sensitive) The value itself.
+
+
+<a id="nestedatt--target--tls--key"></a>
+### Nested Schema for `target.tls.key`
+
+Optional:
+
+- `command` (String) A command, whose output is the value.
+- `env` (String) An environment variable.
+- `path` (String) A file.
+- `value` (String, Sensitive) The value itself.
+
 
 
 <a id="nestedatt--target--volumes"></a>

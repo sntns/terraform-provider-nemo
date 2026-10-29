@@ -8,7 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 )
 
-// oneSource checks that a credential is read from one source exactly.
+// oneSource checks that a credential, or a part of a TLS, is read from one source exactly.
 type oneSource struct{}
 
 var sources = []string{"path", "env", "command", "value"}
@@ -32,7 +32,7 @@ func (oneSource) ValidateObject(_ context.Context, request validator.ObjectReque
 		}
 	}
 	if len(given) != 1 {
-		response.Diagnostics.AddAttributeError(request.Path, "One source of a credential",
+		response.Diagnostics.AddAttributeError(request.Path, "One source",
 			fmt.Sprintf("give one of %s, not %d", strings.Join(sources, ", "), len(given)))
 	}
 }

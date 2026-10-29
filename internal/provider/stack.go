@@ -153,13 +153,13 @@ func targetSchema() schema.Attribute {
 				Optional:            true,
 			},
 			"tls": schema.SingleNestedAttribute{
-				MarkdownDescription: "The TLS of a `tcp://` host, in PEM: the CA that signed the daemon's certificate, and the client's certificate and key. " +
-					"They are not in `manifest`: nemo reaches the target as its user's environment says.",
+				MarkdownDescription: "The TLS of a `tcp://` host, in PEM, instead of `DOCKER_CERT_PATH` and `DOCKER_TLS_VERIFY`. " +
+					"Each part is read from a source, as a credential is, and the manifest keeps the source.",
 				Optional: true,
 				Attributes: map[string]schema.Attribute{
-					"ca":   schema.StringAttribute{MarkdownDescription: "The CA's certificate.", Required: true},
-					"cert": schema.StringAttribute{MarkdownDescription: "The client's certificate.", Required: true},
-					"key":  schema.StringAttribute{MarkdownDescription: "The client's key.", Required: true, Sensitive: true},
+					"ca":   sourceSchema("The CA of the daemon's certificate. Default: the system's.", false),
+					"cert": sourceSchema("The client's certificate, with its key.", false),
+					"key":  sourceSchema("The client's key, with its certificate.", false),
 				},
 			},
 			"images": schema.StringAttribute{
@@ -219,19 +219,35 @@ func installerSchema() schema.Attribute {
 	}
 }
 
-// credentialsSchema is a map of credential sources, each exactly one of
-// a file, a variable, a command or a value, read where Terraform runs.
+// sourceAttributes are those of a source, as nemo reads a credential's:
+// exactly one of a file, a variable, a command or a value, read where
+// Terraform runs.
+func sourceAttributes() map[string]schema.Attribute {
+	return map[string]schema.Attribute{
+		"path":    schema.StringAttribute{MarkdownDescription: "A file.", Optional: true},
+		"env":     schema.StringAttribute{MarkdownDescription: "An environment variable.", Optional: true},
+		"command": schema.StringAttribute{MarkdownDescription: "A command, whose output is the value.", Optional: true},
+		"value":   schema.StringAttribute{MarkdownDescription: "The value itself.", Optional: true, Sensitive: true},
+	}
+}
+
+func sourceSchema(description string, required bool) schema.Attribute {
+	return schema.SingleNestedAttribute{
+		MarkdownDescription: description,
+		Optional:            !required,
+		Required:            required,
+		Attributes:          sourceAttributes(),
+		Validators:          []validator.Object{oneSource{}},
+	}
+}
+
+// credentialsSchema is a map of credential sources.
 func credentialsSchema(description string) schema.Attribute {
 	return schema.MapNestedAttribute{
 		MarkdownDescription: description + " Each is read where Terraform runs, from one source.",
 		Optional:            true,
 		NestedObject: schema.NestedAttributeObject{
-			Attributes: map[string]schema.Attribute{
-				"path":    schema.StringAttribute{MarkdownDescription: "A file.", Optional: true},
-				"env":     schema.StringAttribute{MarkdownDescription: "An environment variable.", Optional: true},
-				"command": schema.StringAttribute{MarkdownDescription: "A command, whose output is the value.", Optional: true},
-				"value":   schema.StringAttribute{MarkdownDescription: "The value itself.", Optional: true, Sensitive: true},
-			},
+			Attributes: sourceAttributes(),
 			Validators: []validator.Object{oneSource{}},
 		},
 	}

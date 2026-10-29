@@ -14,8 +14,14 @@ import (
 
 //go:generate go tool tfplugindocs generate --provider-name nemo
 
-// version is the release's, stamped by GoReleaser.
-var version = "dev"
+var (
+	// these will be set by the goreleaser configuration
+	// to appropriate values for the compiled binary
+	version string = "dev"
+
+	// goreleaser can also pass the specific commit if you want
+	// commit  string = ""
+)
 
 func main() {
 	var debug bool

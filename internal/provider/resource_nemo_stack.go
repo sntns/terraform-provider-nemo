@@ -264,7 +264,9 @@ func targetSchema() schema.Attribute {
 			},
 			"volumes": schema.MapNestedAttribute{
 				MarkdownDescription: "The target's volume types, by name: what a volume of a bundle with that `x-nemo-volume` type is made of. " +
-					"The driver, its options and the provisioned directory are templates of `{{.Stack}}`, `{{.Name}}` and `{{.Options}}`.",
+					"The driver, its options and the provisioned directory are templates of `{{.Stack}}`, `{{.Name}}` and `{{.Options}}`. " +
+					"The type `records` makes the volume of the stack's records, with `nemo-records` as its `{{.Name}}`: on a swarm of several managers, " +
+					"a storage they all mount, where each finds the same records. Without it, the records are in a local volume of the Docker the provider reaches.",
 				Optional: true,
 				NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
 					"driver":  schema.StringAttribute{MarkdownDescription: "The volume driver. Default: `local`.", Optional: true},

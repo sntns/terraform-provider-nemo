@@ -128,7 +128,7 @@ func expandSource(model *nemoStackSourceModel, directory string) *valuesource.So
 			return &source
 		}
 	}
-	return &valuesource.Source{Key: host.SourceValue, Value: redacted}
+	return &valuesource.Source{Key: host.SourceValue, Value: credentials.Redacted}
 }
 
 // copyWriteOnly gives the plan the write-only values of the configuration,

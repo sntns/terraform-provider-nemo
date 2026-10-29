@@ -156,7 +156,7 @@ Optional:
 - `host` (String) The address of the target's Docker: `tcp://`, `ssh://user@host` or `unix://`. With neither `host` nor `context`, the environment's: `DOCKER_HOST`, the current docker context, or the local socket.
 - `images` (String) How the images reach the target: `registry`, which each node pulls them from, or `load`, into its one daemon. Default: `registry`.
 - `tls` (Attributes) The TLS of a `tcp://` host, in PEM, instead of `DOCKER_CERT_PATH` and `DOCKER_TLS_VERIFY`. Each part is read from a source, as a credential is, and the manifest keeps the source. (see [below for nested schema](#nestedatt--target--tls))
-- `volumes` (Attributes Map) The target's volume types, by name: what a volume of a bundle with that `x-nemo-volume` type is made of. The driver, its options and the provisioned directory are templates of `{{.Stack}}`, `{{.Name}}` and `{{.Options}}`. (see [below for nested schema](#nestedatt--target--volumes))
+- `volumes` (Attributes Map) The target's volume types, by name: what a volume of a bundle with that `x-nemo-volume` type is made of. The driver, its options and the provisioned directory are templates of `{{.Stack}}`, `{{.Name}}` and `{{.Options}}`. The type `records` makes the volume of the stack's records, with `nemo-records` as its `{{.Name}}`: on a swarm of several managers, a storage they all mount, where each finds the same records. Without it, the records are in a local volume of the Docker the provider reaches. (see [below for nested schema](#nestedatt--target--volumes))
 
 <a id="nestedatt--target--tls"></a>
 ### Nested Schema for `target.tls`

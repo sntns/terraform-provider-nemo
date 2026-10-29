@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sntns/nemo/pkg/credentials"
 	"github.com/sntns/nemo/pkg/stack"
 	"github.com/sntns/nemo/pkg/storage"
 	"github.com/sntns/nemo/pkg/target"
@@ -144,7 +145,7 @@ func TestWriteOnlyCredentials(t *testing.T) {
 
 	var diags diag.Diagnostics
 	state := expandStack(context.Background(), planned, &diags)
-	assert.Equal(t, valuesource.Source{Key: "value", Value: redacted}, state.Credentials[0].Source, "from the state alone")
+	assert.Equal(t, valuesource.Source{Key: "value", Value: credentials.Redacted}, state.Credentials[0].Source, "from the state alone")
 
 	copyWriteOnly(&planned, config)
 	applied := expandStack(context.Background(), planned, &diags)

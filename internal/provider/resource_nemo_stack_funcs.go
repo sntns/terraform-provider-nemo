@@ -11,13 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cnabio/cnab-go/secrets/host"
-	"github.com/cnabio/cnab-go/valuesource"
-
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
+	"github.com/sntns/nemo/pkg/credentials"
 	"github.com/sntns/nemo/pkg/nemo"
 	"github.com/sntns/nemo/pkg/progress"
 	"github.com/sntns/nemo/pkg/runtime"
@@ -69,7 +67,7 @@ func installedOn(ctx context.Context, manifest stack.Stack) (_ []storage.Install
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, api.Close()) }()
-	records, err := volume.Open(ctx, api, manifest.Name, false)
+	records, err := volume.Open(ctx, api, manifest.Name, manifest.Target.Volumes, false)
 	if err != nil {
 		return nil, err
 	}
@@ -119,33 +117,16 @@ func refreshInstallations(ctx context.Context, model *nemoStackResourceModel, pr
 	model.ID = model.Name
 }
 
-// redacted stands for a value the manifest does not show, as nemo's records
-// keep it.
-const redacted = "*******"
-
-// encodeManifest writes the manifest, its values redacted.
+// encodeManifest writes the manifest, its values redacted as nemo's records
+// keep them.
 func encodeManifest(manifest stack.Stack, diags *diag.Diagnostics) types.String {
-	redact := func(source *valuesource.Source) *valuesource.Source {
-		if source == nil || source.Key != host.SourceValue {
-			return source
-		}
-		return &valuesource.Source{Key: host.SourceValue, Value: redacted}
-	}
-	redactAll := func(strategies []valuesource.Strategy) []valuesource.Strategy {
-		var shown []valuesource.Strategy
-		for _, strategy := range strategies {
-			strategy.Source = *redact(&strategy.Source)
-			shown = append(shown, strategy)
-		}
-		return shown
-	}
-	manifest.Credentials = redactAll(manifest.Credentials)
+	manifest.Credentials = credentials.Recorded(manifest.Credentials)
 	manifest.Installations = slices.Clone(manifest.Installations)
 	for i, installation := range manifest.Installations {
-		manifest.Installations[i].Credentials = redactAll(installation.Credentials)
+		manifest.Installations[i].Credentials = credentials.Recorded(installation.Credentials)
 	}
 	if tls := manifest.Target.TLS; tls != nil {
-		manifest.Target.TLS = &target.TLS{CA: redact(tls.CA), Cert: redact(tls.Cert), Key: redact(tls.Key)}
+		manifest.Target.TLS = &target.TLS{CA: credentials.RecordedSource(tls.CA), Cert: credentials.RecordedSource(tls.Cert), Key: credentials.RecordedSource(tls.Key)}
 	}
 	encoded, err := stack.Encode(manifest, stack.YAML)
 	if err != nil {

@@ -15,14 +15,8 @@ import (
 //go:generate terraform fmt -recursive ./examples/
 //go:generate go tool tfplugindocs generate --provider-name nemo
 
-var (
-	// these will be set by the goreleaser configuration
-	// to appropriate values for the compiled binary
-	version string = "dev"
-
-	// goreleaser can also pass the specific commit if you want
-	// commit  string = ""
-)
+// version is the release's, which GoReleaser sets.
+var version = "dev"
 
 func main() {
 	var debug bool

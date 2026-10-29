@@ -1,5 +1,7 @@
 name: CI
 
+# release-please's pull requests change the changelog and the version only,
+# of code that passed it: their jobs are skipped.
 on:
   pull_request:
 
@@ -8,6 +10,7 @@ permissions:
 
 jobs:
   lint:
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -19,6 +22,7 @@ jobs:
           version: v2.15
 
   test:
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -35,6 +39,7 @@ jobs:
           git diff --exit-code docs || (echo "::error::run go generate ./... and commit docs" && exit 1)
 
   acceptance:
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -46,3 +51,19 @@ jobs:
           terraform_wrapper: false
       - name: Deploy, import and destroy stacks on the runner's Docker
         run: make testacc
+
+  release:
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build the release's archives and SHA256SUMS, unsigned and unpublished
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=sign,publish

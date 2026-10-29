@@ -3,14 +3,14 @@
 page_title: "nemo_stack Resource - nemo"
 subcategory: ""
 description: |-
-  A stack: bundles deployed together on one target, as nemo deploys a manifest with nemo up. Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, and uninstalls those it no longer lists. Reading it reads what the target runs, so that an installation changed by hand shows in the next plan. Destroying it uninstalls every installation.
+  A stack: bundles deployed together on one target, as nemo deploys a manifest with nemo up. Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, and uninstalls those it no longer lists. Reading it reads the records of its installations on the target, so that an installation nemo changed with --force shows in the next plan. Destroying it uninstalls every installation. A stack its target has already is imported, not created.
   The records of its installations are kept on its target (records: target in nemo's manifest): nemo reads them from any machine that imported manifest, and refuses to write the stack without --force.
   nemo bounds each action on an installation, by its nemo-timeout parameter: 5m unless the stack's parameters give another. timeouts bounds the whole operation on top of it; without it, Terraform waits as long as nemo does.
 ---
 
 # nemo_stack (Resource)
 
-A stack: bundles deployed together on one target, as nemo deploys a manifest with `nemo up`. Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, and uninstalls those it no longer lists. Reading it reads what the target runs, so that an installation changed by hand shows in the next plan. Destroying it uninstalls every installation.
+A stack: bundles deployed together on one target, as nemo deploys a manifest with `nemo up`. Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, and uninstalls those it no longer lists. Reading it reads the records of its installations on the target, so that an installation nemo changed with `--force` shows in the next plan. Destroying it uninstalls every installation. A stack its target has already is imported, not created.
 
 The records of its installations are kept on its target (`records: target` in nemo's manifest): nemo reads them from any machine that imported `manifest`, and refuses to write the stack without `--force`.
 
@@ -97,7 +97,7 @@ output "manifest" {
 - `credentials` (Attributes Map) Credentials, by name, for every installation whose bundle declares them. An installation's own come over them. Each is read where Terraform runs, from one source. (see [below for nested schema](#nestedatt--credentials))
 - `installer` (Attributes) Where gill, the installer, runs: on the target, the default, or as a Job in a Kubernetes cluster that reaches the target over `tcp://`. (see [below for nested schema](#nestedatt--installer))
 - `parameters` (Map of String) Parameters, by name, for every installation whose bundle declares them. An installation's own come over them.
-- `purge_on_destroy` (Boolean) Destroying the stack also removes its volumes, **data included**. Default: `false`, the volumes are kept for the next install.
+- `purge_on_destroy` (Boolean) Destroying the stack, or an installation it no longer lists, also removes their volumes, **data included**. Default: `false`, the volumes are kept for the next install.
 - `remote` (String) Where the bundles of the installations that give a version alone are: a template of `{{ .Component }}`, the installation's name, and `{{ .Version }}`, its version, such as `docker://ghcr.io/sntns/{{ .Component }}:{{ .Version }}`.
 - `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 
@@ -116,7 +116,7 @@ Required:
 Optional:
 
 - `credentials` (Attributes Map) This installation's credentials, over the stack's. Each is read where Terraform runs, from one source. (see [below for nested schema](#nestedatt--installations--credentials))
-- `file` (String) A `bundle.json`, instead of `remote` or `repository`.
+- `file` (String) A `bundle.json`, instead of `remote` or `repository`. Terraform compares its path, not its content: a bundle rebuilt at the same path is deployed by the next apply that changes the stack.
 - `parameters` (Map of String) This installation's parameters, over the stack's.
 - `repository` (String) The bundle's repository in a registry, instead of `remote`: `ghcr.io/sntns/whoami`.
 - `version` (String) The bundle's version: with `remote`, or with `repository`. Reading the stack sets the version deployed.

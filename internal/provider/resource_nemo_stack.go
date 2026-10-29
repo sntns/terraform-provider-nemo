@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -31,6 +30,79 @@ var dockerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
 type nemoStackResource struct{}
 
+type nemoStackResourceModel struct {
+	ID             types.String                    `tfsdk:"id"`
+	Name           types.String                    `tfsdk:"name"`
+	Target         *nemoStackTargetModel           `tfsdk:"target"`
+	Installer      *nemoStackInstallerModel        `tfsdk:"installer"`
+	Remote         types.String                    `tfsdk:"remote"`
+	Parameters     types.Map                       `tfsdk:"parameters"`
+	Credentials    map[string]nemoStackSourceModel `tfsdk:"credentials"`
+	Installations  []nemoStackInstallationModel    `tfsdk:"installations"`
+	PurgeOnDestroy types.Bool                      `tfsdk:"purge_on_destroy"`
+	Timeouts       timeouts.Value                  `tfsdk:"timeouts"`
+	Manifest       types.String                    `tfsdk:"manifest"`
+}
+
+type nemoStackTargetModel struct {
+	Orchestrator types.String                        `tfsdk:"orchestrator"`
+	Host         types.String                        `tfsdk:"host"`
+	Context      types.String                        `tfsdk:"context"`
+	TLS          *nemoStackTLSModel                  `tfsdk:"tls"`
+	Images       types.String                        `tfsdk:"images"`
+	Volumes      map[string]nemoStackVolumeTypeModel `tfsdk:"volumes"`
+}
+
+type nemoStackTLSModel struct {
+	CA   *nemoStackSourceModel `tfsdk:"ca"`
+	Cert *nemoStackSourceModel `tfsdk:"cert"`
+	Key  *nemoStackSourceModel `tfsdk:"key"`
+}
+
+type nemoStackVolumeTypeModel struct {
+	Driver    types.String                   `tfsdk:"driver"`
+	Options   types.Map                      `tfsdk:"options"`
+	Provision *nemoStackVolumeProvisionModel `tfsdk:"provision"`
+}
+
+type nemoStackVolumeProvisionModel struct {
+	Directory types.String               `tfsdk:"directory"`
+	Volume    nemoStackVolumeDriverModel `tfsdk:"volume"`
+}
+
+type nemoStackVolumeDriverModel struct {
+	Driver  types.String `tfsdk:"driver"`
+	Options types.Map    `tfsdk:"options"`
+}
+
+type nemoStackInstallerModel struct {
+	Driver     types.String              `tfsdk:"driver"`
+	Kubernetes *nemoStackKubernetesModel `tfsdk:"kubernetes"`
+}
+
+type nemoStackKubernetesModel struct {
+	Namespace  types.String `tfsdk:"namespace"`
+	Kubeconfig types.String `tfsdk:"kubeconfig"`
+}
+
+type nemoStackInstallationModel struct {
+	Name        types.String                    `tfsdk:"name"`
+	Version     types.String                    `tfsdk:"version"`
+	Repository  types.String                    `tfsdk:"repository"`
+	File        types.String                    `tfsdk:"file"`
+	Parameters  types.Map                       `tfsdk:"parameters"`
+	Credentials map[string]nemoStackSourceModel `tfsdk:"credentials"`
+}
+
+// nemoStackSourceModel is where a credential, or a part of a TLS, is read:
+// one of a file, a variable, a command or a value.
+type nemoStackSourceModel struct {
+	Path    types.String `tfsdk:"path"`
+	Env     types.String `tfsdk:"env"`
+	Command types.String `tfsdk:"command"`
+	Value   types.String `tfsdk:"value"`
+}
+
 func NewNemoStackResource() resource.Resource {
 	return &nemoStackResource{}
 }
@@ -43,8 +115,9 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "A stack: bundles deployed together on one target, as nemo deploys a manifest with `nemo up`. " +
 			"Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, " +
-			"and uninstalls those it no longer lists. Reading it reads what the target runs, so that an installation changed by hand " +
-			"shows in the next plan. Destroying it uninstalls every installation.\n\n" +
+			"and uninstalls those it no longer lists. Reading it reads the records of its installations on the target, so that an installation " +
+			"nemo changed with `--force` shows in the next plan. Destroying it uninstalls every installation. " +
+			"A stack its target has already is imported, not created.\n\n" +
 			"The records of its installations are kept on its target (`records: target` in nemo's manifest): " +
 			"nemo reads them from any machine that imported `manifest`, and refuses to write the stack without `--force`.\n\n" +
 			"nemo bounds each action on an installation, by its `nemo-timeout` parameter: `5m` unless the stack's `parameters` give another. " +
@@ -92,7 +165,7 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 						Optional:            true,
 					},
 					"file": schema.StringAttribute{
-						MarkdownDescription: "A `bundle.json`, instead of `remote` or `repository`.",
+						MarkdownDescription: "A `bundle.json`, instead of `remote` or `repository`. Terraform compares its path, not its content: a bundle rebuilt at the same path is deployed by the next apply that changes the stack.",
 						Optional:            true,
 					},
 					"parameters": schema.MapAttribute{
@@ -104,7 +177,7 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 				}},
 			},
 			"purge_on_destroy": schema.BoolAttribute{
-				MarkdownDescription: "Destroying the stack also removes its volumes, **data included**. Default: `false`, the volumes are kept for the next install.",
+				MarkdownDescription: "Destroying the stack, or an installation it no longer lists, also removes their volumes, **data included**. Default: `false`, the volumes are kept for the next install.",
 				Optional:            true,
 				Computed:            true,
 				Default:             booldefault.StaticBool(false),
@@ -269,34 +342,107 @@ func (r *nemoStackResource) ImportState(ctx context.Context, req resource.Import
 	}
 }
 
-// importID splits an import ID into the Docker's address and the stack's
-// name: NAME, or HOST/NAME.
-func importID(id string) (string, string, error) {
-	host, name := "", id
-	if strings.Contains(id, "://") {
-		index := strings.LastIndex(id, "/")
-		host, name = id[:index], id[index+1:]
+func (r *nemoStackResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan nemoStackResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	if !dockerName.MatchString(name) {
-		return "", "", fmt.Errorf("%q: the stack's name, after the address of its Docker when the environment's is not the one: shop, or tcp://10.1.0.10:2376/shop", id)
+
+	ctx, cancel := bounded(ctx, plan.Timeouts.Create, &resp.Diagnostics)
+	defer cancel()
+	manifest := expandStack(ctx, plan, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
 	}
-	return host, name, nil
+
+	present, err := installedOn(ctx, manifest)
+	if err != nil {
+		resp.Diagnostics.AddError("nemo stack read failed", err.Error())
+		return
+	}
+	if len(present) > 0 {
+		resp.Diagnostics.AddError("nemo stack already exists",
+			fmt.Sprintf("The target has installations of the stack %s already: import it, with terraform import and the ID %s.", manifest.Name, importIDOf(manifest)))
+		return
+	}
+
+	plan.ID = types.StringValue(manifest.Name)
+	plan.Manifest = encodeManifest(manifest, &resp.Diagnostics)
+	if err := up(ctx, manifest, plan.PurgeOnDestroy.ValueBool()); err != nil {
+		resp.Diagnostics.AddError("nemo stack create failed", err.Error())
+	}
+	// Saved even when an action failed: the stack is tainted, and the next apply replaces it.
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// The resource's actions come once its schema is agreed on.
+func (r *nemoStackResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state nemoStackResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-func (r *nemoStackResource) Create(_ context.Context, _ resource.CreateRequest, resp *resource.CreateResponse) {
-	resp.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
+	ctx, cancel := bounded(ctx, state.Timeouts.Read, &resp.Diagnostics)
+	defer cancel()
+	manifest := expandStack(ctx, state, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	present, err := installedOn(ctx, manifest)
+	if err != nil {
+		resp.Diagnostics.AddError("nemo stack read failed", err.Error())
+		return
+	}
+	if len(present) == 0 {
+		resp.State.RemoveResource(ctx)
+		return
+	}
+
+	refreshInstallations(ctx, &state, present, &resp.Diagnostics)
+	state.Manifest = encodeManifest(expandStack(ctx, state, &resp.Diagnostics), &resp.Diagnostics)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *nemoStackResource) Read(_ context.Context, _ resource.ReadRequest, resp *resource.ReadResponse) {
-	resp.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
+func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan nemoStackResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	ctx, cancel := bounded(ctx, plan.Timeouts.Update, &resp.Diagnostics)
+	defer cancel()
+	manifest := expandStack(ctx, plan, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	plan.ID = types.StringValue(manifest.Name)
+	plan.Manifest = encodeManifest(manifest, &resp.Diagnostics)
+	if err := up(ctx, manifest, plan.PurgeOnDestroy.ValueBool()); err != nil {
+		resp.Diagnostics.AddError("nemo stack update failed", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func (r *nemoStackResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
-}
+func (r *nemoStackResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state nemoStackResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-func (r *nemoStackResource) Delete(_ context.Context, _ resource.DeleteRequest, resp *resource.DeleteResponse) {
-	resp.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
+	ctx, cancel := bounded(ctx, state.Timeouts.Delete, &resp.Diagnostics)
+	defer cancel()
+	manifest := expandStack(ctx, state, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if err := down(ctx, manifest, state.PurgeOnDestroy.ValueBool()); err != nil {
+		resp.Diagnostics.AddError("nemo stack delete failed", err.Error())
+	}
 }

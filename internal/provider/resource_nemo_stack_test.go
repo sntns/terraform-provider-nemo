@@ -2,7 +2,9 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -10,6 +12,7 @@ import (
 
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
@@ -30,12 +33,23 @@ func TestNemoStackResource_schema(t *testing.T) {
 	assert.True(t, resp.Schema.Attributes["manifest"].IsSensitive(), "it holds the credentials given by value")
 }
 
-// A stack on the environment's Docker, with Compose: created, updated,
-// imported, refused a second time, then destroyed.
+// A stack on the environment's Docker, with Compose: created, its bundle
+// rebuilt at the same path, updated, imported, refused a second time, then
+// destroyed.
 func TestAccNemoStack_basic(t *testing.T) {
 	name := "tf-acc-basic"
-	bundle, err := filepath.Abs(filepath.Join("..", "..", "testdata", "bundles", "hello", "bundle.json"))
+	built, err := os.ReadFile(filepath.Join("..", "..", "testdata", "bundles", "hello", "bundle.json"))
 	require.NoError(t, err)
+	bundle := filepath.Join(t.TempDir(), "bundle.json")
+	rebuild := func(version string) {
+		var document map[string]any
+		require.NoError(t, json.Unmarshal(built, &document))
+		document["version"] = version
+		data, err := json.Marshal(document)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(bundle, data, 0o600))
+	}
+	rebuild("0.1.0")
 	config := func(test string) string {
 		return fmt.Sprintf(loadTestConfiguration(t, "nemo_stack", test), name, bundle)
 	}
@@ -51,8 +65,18 @@ func TestAccNemoStack_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("nemo_stack.test", "id", name),
 					resource.TestCheckResourceAttr("nemo_stack.test", "target.images", target.ImagesRegistry),
 					resource.TestCheckResourceAttrSet("nemo_stack.test", "manifest"),
+					resource.TestCheckResourceAttrSet("nemo_stack.test", "content_hash"),
 					checkNemoStackInstalled(name, "hello"),
+					checkNemoStackDeployed(name, "hello", "0.1.0"),
 				),
+			},
+			{
+				PreConfig: func() { rebuild("0.2.0") },
+				Config:    config("testAccNemoStack_basic"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("nemo_stack.test", plancheck.ResourceActionUpdate)},
+				},
+				Check: checkNemoStackDeployed(name, "hello", "0.2.0"),
 			},
 			{
 				Config: config("testAccNemoStack_update"),
@@ -90,6 +114,23 @@ func checkNemoStackInstalled(name string, installations ...string) resource.Test
 		}
 		if !slices.Equal(names, installations) {
 			return fmt.Errorf("stack %s: installed %v, expected %v", name, names, installations)
+		}
+		return nil
+	}
+}
+
+// checkNemoStackDeployed checks that the installation's last action ran the
+// bundle's version.
+func checkNemoStackDeployed(name, installation, version string) resource.TestCheckFunc {
+	return func(*terraform.State) error {
+		present, err := installedOn(context.Background(), stack.Stack{Name: name})
+		if err != nil {
+			return err
+		}
+		for _, installed := range present {
+			if installed.Name == installation && deployedVersion(installed) != version {
+				return fmt.Errorf("stack %s: %s deployed at %s, expected %s", name, installation, deployedVersion(installed), version)
+			}
 		}
 		return nil
 	}

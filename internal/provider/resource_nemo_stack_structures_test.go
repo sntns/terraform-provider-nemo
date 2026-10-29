@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/cnabio/cnab-go/valuesource"
@@ -61,19 +63,26 @@ func shop() nemoStackResourceModel {
 func TestExpandStack(t *testing.T) {
 	t.Parallel()
 	var diags diag.Diagnostics
-	manifest := expandStack(context.Background(), shop(), &diags)
+	model := shop()
+	model.Installations = append(model.Installations, nemoStackInstallationModel{
+		Name: types.StringValue("worker"), Version: types.StringNull(), Repository: types.StringNull(), File: types.StringValue("bundles/worker/bundle.json"), Parameters: types.MapNull(types.StringType),
+	})
+	manifest := expandStack(context.Background(), model, &diags)
 	require.False(t, diags.HasError(), diags)
+	directory, err := os.Getwd()
+	require.NoError(t, err)
 	require.NoError(t, manifest.Validate())
 	assert.Equal(t, stack.RecordsTarget, manifest.Records, "the records are on the target, for every machine that reaches it")
 	assert.Equal(t, &target.TLS{
-		CA:   &valuesource.Source{Key: "path", Value: "ca.pem"},
+		CA:   &valuesource.Source{Key: "path", Value: filepath.Join(directory, "ca.pem")},
 		Cert: &valuesource.Source{Key: "env", Value: "CERT"},
 		Key:  &valuesource.Source{Key: "value", Value: "key"},
 	}, manifest.Target.TLS)
 	assert.Equal(t, []valuesource.Strategy{
-		{Name: "registry", Source: valuesource.Source{Key: "path", Value: "registry.json"}},
+		{Name: "registry", Source: valuesource.Source{Key: "path", Value: filepath.Join(directory, "registry.json")}},
 		{Name: "token", Source: valuesource.Source{Key: "env", Value: "TOKEN"}},
-	}, manifest.Credentials, "by name, the same manifest each time")
+	}, manifest.Credentials, "by name, the same manifest each time, its paths absolute as nemo's")
+	assert.Equal(t, filepath.Join(directory, "bundles/worker/bundle.json"), manifest.Installations[2].Bundle.File, "for nemo stack import from anywhere")
 	assert.Equal(t, storage.InstallationSpec{
 		Name: "web", Stack: "shop", Parameters: map[string]string{"port": "8080"},
 		Bundle: storage.BundleReference{Repository: "registry.example.com/web", Version: "2.0.0"},
@@ -110,5 +119,5 @@ func TestFlattenTarget(t *testing.T) {
 	assert.Equal(t, target.ImagesRegistry, flattened.Images.ValueString(), "nemo's default, as the schema's")
 	expected := given
 	expected.Images = target.ImagesRegistry
-	assert.Equal(t, expected, expandTarget(context.Background(), flattened, &diags))
+	assert.Equal(t, expected, expandTarget(context.Background(), flattened, "/elsewhere", &diags))
 }

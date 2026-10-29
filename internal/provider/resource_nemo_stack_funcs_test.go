@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cnabio/cnab-go/valuesource"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -125,4 +126,18 @@ func TestPlannedFiles(t *testing.T) {
 	assert.False(t, known, "a file another resource gives: the hash is known after apply")
 	_, known = plannedFiles(types.ListUnknown(types.ObjectType{AttrTypes: attributes}))
 	assert.False(t, known)
+}
+
+// The manifest output shows no value, as nemo's records keep none.
+func TestEncodeManifest_redactsTheValues(t *testing.T) {
+	t.Parallel()
+	var diags diag.Diagnostics
+	manifest := expandStack(context.Background(), shop(), &diags)
+	manifest.Installations[0].Credentials = []valuesource.Strategy{{Name: "api-key", Source: valuesource.Source{Key: "value", Value: "k3y"}}}
+	encoded := encodeManifest(manifest, &diags)
+	require.False(t, diags.HasError(), diags)
+	assert.NotContains(t, encoded.ValueString(), "k3y")
+	assert.Contains(t, encoded.ValueString(), "value: '*******'", "the source kept, its value redacted")
+	assert.Contains(t, encoded.ValueString(), "env: CERT", "the other sources as they are")
+	assert.Equal(t, "key", manifest.Target.TLS.Key.Value, "the manifest nemo deploys keeps its values")
 }

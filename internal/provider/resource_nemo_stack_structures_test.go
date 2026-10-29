@@ -21,8 +21,10 @@ import (
 )
 
 func source(key, value string) *nemoStackSourceModel {
-	model := &nemoStackSourceModel{Path: types.StringNull(), Env: types.StringNull(), Command: types.StringNull(), Value: types.StringNull()}
+	model := &nemoStackSourceModel{Path: types.StringNull(), Env: types.StringNull(), Command: types.StringNull(), Value: types.StringNull(), ValueWO: types.StringNull(), ValueWOVersion: types.StringNull()}
 	switch key {
+	case "value_wo":
+		model.ValueWO = types.StringValue(value)
 	case "path":
 		model.Path = types.StringValue(value)
 	case "env":
@@ -31,6 +33,11 @@ func source(key, value string) *nemoStackSourceModel {
 		model.Value = types.StringValue(value)
 	}
 	return model
+}
+
+func tlsSource(key, value string) *nemoStackTLSSourceModel {
+	given := source(key, value)
+	return &nemoStackTLSSourceModel{Path: given.Path, Env: given.Env, Command: given.Command, Value: given.Value}
 }
 
 func stringMap(values map[string]string) types.Map {
@@ -45,7 +52,7 @@ func shop() nemoStackResourceModel {
 		Target: &nemoStackTargetModel{
 			Orchestrator: types.StringValue(target.Swarm), Host: types.StringValue("tcp://10.1.0.10:2376"), Context: types.StringNull(),
 			Images: types.StringValue(target.ImagesRegistry),
-			TLS:    &nemoStackTLSModel{CA: source("path", "ca.pem"), Cert: source("env", "CERT"), Key: source("value", "key")},
+			TLS:    &nemoStackTLSModel{CA: tlsSource("path", "ca.pem"), Cert: tlsSource("env", "CERT"), Key: tlsSource("value", "key")},
 		},
 		Remote:      types.StringValue("docker://registry.example.com/{{ .Component }}:{{ .Version }}"),
 		Parameters:  types.MapNull(types.StringType),
@@ -120,4 +127,31 @@ func TestFlattenTarget(t *testing.T) {
 	expected := given
 	expected.Images = target.ImagesRegistry
 	assert.Equal(t, expected, expandTarget(context.Background(), flattened, "/elsewhere", &diags))
+}
+
+// A credential given by value_wo reaches nemo while Terraform applies the
+// configuration, which alone has it; reading and destroying, with the state
+// alone, give nemo its value redacted, as nemo's records keep it.
+func TestWriteOnlyCredentials(t *testing.T) {
+	t.Parallel()
+	writeOnly := nemoStackSourceModel{Path: types.StringNull(), Env: types.StringNull(), Command: types.StringNull(), Value: types.StringNull(), ValueWO: types.StringNull(), ValueWOVersion: types.StringValue("2")}
+	planned := shop()
+	planned.Credentials = map[string]nemoStackSourceModel{"token": *source("env", "TOKEN"), "password": writeOnly}
+	planned.Installations[1].Credentials = map[string]nemoStackSourceModel{"api-key": writeOnly}
+	config := shop()
+	config.Credentials = map[string]nemoStackSourceModel{"token": *source("env", "TOKEN"), "password": *source("value_wo", "hunter2")}
+	config.Installations[1].Credentials = map[string]nemoStackSourceModel{"api-key": *source("value_wo", "k3y")}
+
+	var diags diag.Diagnostics
+	state := expandStack(context.Background(), planned, &diags)
+	assert.Equal(t, valuesource.Source{Key: "value", Value: redacted}, state.Credentials[0].Source, "from the state alone")
+
+	copyWriteOnly(&planned, config)
+	applied := expandStack(context.Background(), planned, &diags)
+	require.False(t, diags.HasError(), diags)
+	assert.Equal(t, []valuesource.Strategy{
+		{Name: "password", Source: valuesource.Source{Key: "value", Value: "hunter2"}},
+		{Name: "token", Source: valuesource.Source{Key: "env", Value: "TOKEN"}},
+	}, applied.Credentials)
+	assert.Equal(t, []valuesource.Strategy{{Name: "api-key", Source: valuesource.Source{Key: "value", Value: "k3y"}}}, applied.Installations[1].Credentials)
 }

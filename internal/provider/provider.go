@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 )
 
-var _ provider.Provider = (*nemoProvider)(nil)
+var _ provider.Provider = &nemoProvider{}
 
 type nemoProvider struct {
 	version string
@@ -24,12 +24,12 @@ func New(version string) func() provider.Provider {
 	}
 }
 
-func (p *nemoProvider) Metadata(_ context.Context, _ provider.MetadataRequest, response *provider.MetadataResponse) {
-	response.TypeName, response.Version = "nemo", p.version
+func (p *nemoProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
+	resp.TypeName, resp.Version = "nemo", p.version
 }
 
-func (p *nemoProvider) Schema(_ context.Context, _ provider.SchemaRequest, response *provider.SchemaResponse) {
-	response.Schema = schema.Schema{
+func (p *nemoProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
+	resp.Schema = schema.Schema{
 		MarkdownDescription: "Deploys stacks of bundles with [nemo](https://github.com/sntns/nemo): " +
 			"each `nemo_stack` is a manifest nemo reads, deployed on the Docker of its target with Swarm or Compose. " +
 			"The provider keeps the records of a stack's installations on its target, where `nemo status` and `nemo logs` find them " +
@@ -41,7 +41,7 @@ func (p *nemoProvider) Configure(context.Context, provider.ConfigureRequest, *pr
 }
 
 func (p *nemoProvider) Resources(context.Context) []func() resource.Resource {
-	return []func() resource.Resource{newStackResource}
+	return []func() resource.Resource{NewNemoStackResource}
 }
 
 func (p *nemoProvider) DataSources(context.Context) []func() datasource.DataSource {

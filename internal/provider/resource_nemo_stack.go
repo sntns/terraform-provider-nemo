@@ -22,25 +22,25 @@ import (
 )
 
 var (
-	_ resource.Resource                = (*stackResource)(nil)
-	_ resource.ResourceWithImportState = (*stackResource)(nil)
+	_ resource.Resource                = &nemoStackResource{}
+	_ resource.ResourceWithImportState = &nemoStackResource{}
 )
 
 // dockerName is what Docker accepts in the names nemo gives after the stack.
 var dockerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
-type stackResource struct{}
+type nemoStackResource struct{}
 
-func newStackResource() resource.Resource {
-	return &stackResource{}
+func NewNemoStackResource() resource.Resource {
+	return &nemoStackResource{}
 }
 
-func (r *stackResource) Metadata(_ context.Context, request resource.MetadataRequest, response *resource.MetadataResponse) {
-	response.TypeName = request.ProviderTypeName + "_stack"
+func (r *nemoStackResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_stack"
 }
 
-func (r *stackResource) Schema(ctx context.Context, _ resource.SchemaRequest, response *resource.SchemaResponse) {
-	response.Schema = schema.Schema{
+func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = schema.Schema{
 		MarkdownDescription: "A stack: bundles deployed together on one target, as nemo deploys a manifest with `nemo up`. " +
 			"Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, " +
 			"and uninstalls those it no longer lists. Reading it reads what the target runs, so that an installation changed by hand " +
@@ -256,16 +256,16 @@ func credentialsSchema(description string) schema.Attribute {
 // ImportState takes a stack nemo deployed: its name, after the address of
 // its Docker when the environment's is not the one, tcp://10.1.0.10:2376/shop.
 // Reading the stack then fills the rest from its records on the target.
-func (r *stackResource) ImportState(ctx context.Context, request resource.ImportStateRequest, response *resource.ImportStateResponse) {
-	host, name, err := importID(request.ID)
+func (r *nemoStackResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	host, name, err := importID(req.ID)
 	if err != nil {
-		response.Diagnostics.AddError("Invalid import ID", err.Error())
+		resp.Diagnostics.AddError("Invalid import ID", err.Error())
 		return
 	}
-	response.Diagnostics.Append(response.State.SetAttribute(ctx, path.Root("id"), name)...)
-	response.Diagnostics.Append(response.State.SetAttribute(ctx, path.Root("name"), name)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), name)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("name"), name)...)
 	if host != "" {
-		response.Diagnostics.Append(response.State.SetAttribute(ctx, path.Root("target").AtName("host"), host)...)
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("target").AtName("host"), host)...)
 	}
 }
 
@@ -285,18 +285,18 @@ func importID(id string) (string, string, error) {
 
 // The resource's actions come once its schema is agreed on.
 
-func (r *stackResource) Create(_ context.Context, _ resource.CreateRequest, response *resource.CreateResponse) {
-	response.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
+func (r *nemoStackResource) Create(_ context.Context, _ resource.CreateRequest, resp *resource.CreateResponse) {
+	resp.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
 }
 
-func (r *stackResource) Read(_ context.Context, _ resource.ReadRequest, response *resource.ReadResponse) {
-	response.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
+func (r *nemoStackResource) Read(_ context.Context, _ resource.ReadRequest, resp *resource.ReadResponse) {
+	resp.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
 }
 
-func (r *stackResource) Update(_ context.Context, _ resource.UpdateRequest, response *resource.UpdateResponse) {
-	response.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
+func (r *nemoStackResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
+	resp.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
 }
 
-func (r *stackResource) Delete(_ context.Context, _ resource.DeleteRequest, response *resource.DeleteResponse) {
-	response.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
+func (r *nemoStackResource) Delete(_ context.Context, _ resource.DeleteRequest, resp *resource.DeleteResponse) {
+	resp.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
 }

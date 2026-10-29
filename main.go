@@ -12,6 +12,7 @@ import (
 	"github.com/sntns/terraform-provider-nemo/internal/provider"
 )
 
+//go:generate terraform fmt -recursive ./examples/
 //go:generate go tool tfplugindocs generate --provider-name nemo
 
 var (

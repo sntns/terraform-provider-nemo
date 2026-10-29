@@ -2,8 +2,11 @@ package provider
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/stretchr/testify/assert"
@@ -77,4 +80,49 @@ func TestImportID(t *testing.T) {
 	assert.Error(t, err, "no name")
 	_, _, err = importID("shop stack")
 	assert.Error(t, err)
+}
+
+func TestContentHash(t *testing.T) {
+	t.Parallel()
+	directory := t.TempDir()
+	api, web := filepath.Join(directory, "api.json"), filepath.Join(directory, "web.json")
+	require.NoError(t, os.WriteFile(api, []byte(`{"version":"1.0.0"}`), 0o600))
+	require.NoError(t, os.WriteFile(web, []byte(`{"version":"2.0.0"}`), 0o600))
+
+	first, err := contentHash([]string{api, web})
+	require.NoError(t, err)
+	again, err := contentHash([]string{api, web})
+	require.NoError(t, err)
+	assert.Equal(t, first, again)
+	reversed, err := contentHash([]string{web, api})
+	require.NoError(t, err)
+	assert.NotEqual(t, first, reversed, "in the installations' order")
+
+	require.NoError(t, os.WriteFile(api, []byte(`{"version":"1.0.1"}`), 0o600))
+	rebuilt, err := contentHash([]string{api, web})
+	require.NoError(t, err)
+	assert.NotEqual(t, first, rebuilt, "a bundle rebuilt at the same path")
+
+	none, err := contentHash(nil)
+	require.NoError(t, err)
+	assert.True(t, none.IsNull(), "a stack of registries only")
+	_, err = contentHash([]string{filepath.Join(directory, "missing.json")})
+	assert.Error(t, err)
+}
+
+func TestPlannedFiles(t *testing.T) {
+	t.Parallel()
+	attributes := map[string]attr.Type{"file": types.StringType}
+	object := func(file types.String) attr.Value {
+		return types.ObjectValueMust(attributes, map[string]attr.Value{"file": file})
+	}
+	planned := types.ListValueMust(types.ObjectType{AttrTypes: attributes}, []attr.Value{object(types.StringValue("api.json")), object(types.StringNull())})
+	files, known := plannedFiles(planned)
+	assert.True(t, known)
+	assert.Equal(t, []string{"api.json"}, files)
+
+	_, known = plannedFiles(types.ListValueMust(types.ObjectType{AttrTypes: attributes}, []attr.Value{object(types.StringUnknown())}))
+	assert.False(t, known, "a file another resource gives: the hash is known after apply")
+	_, known = plannedFiles(types.ListUnknown(types.ObjectType{AttrTypes: attributes}))
+	assert.False(t, known)
 }

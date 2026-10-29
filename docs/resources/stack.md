@@ -103,6 +103,7 @@ output "manifest" {
 
 ### Read-Only
 
+- `content_hash` (String) The SHA-256 of the installations' bundle files, in their order, computed at plan time: a bundle rebuilt at the same path changes it, and the next apply deploys it.
 - `id` (String) The stack's name.
 - `manifest` (String, Sensitive) The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, its status and its logs, from where it reaches the target. Its paths are absolute, from where Terraform runs, and its credentials given by `value` are in it.
 
@@ -116,7 +117,7 @@ Required:
 Optional:
 
 - `credentials` (Attributes Map) This installation's credentials, over the stack's. Each is read where Terraform runs, from one source. (see [below for nested schema](#nestedatt--installations--credentials))
-- `file` (String) A `bundle.json`, instead of `remote` or `repository`. Terraform compares its path, not its content: a bundle rebuilt at the same path is deployed by the next apply that changes the stack.
+- `file` (String) A `bundle.json`, instead of `remote` or `repository`: its content is followed by `content_hash`.
 - `parameters` (Map of String) This installation's parameters, over the stack's.
 - `repository` (String) The bundle's repository in a registry, instead of `remote`: `ghcr.io/sntns/whoami`.
 - `version` (String) The bundle's version: with `remote`, or with `repository`. Reading the stack sets the version deployed.

@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -161,4 +163,55 @@ func importIDOf(manifest stack.Stack) string {
 		return host + "/" + manifest.Name
 	}
 	return manifest.Name
+}
+
+// contentHash is the SHA-256 of the files' contents, in their order, none
+// without any: a path that changes shows on its own.
+func contentHash(files []string) (types.String, error) {
+	if len(files) == 0 {
+		return types.StringNull(), nil
+	}
+	sum := sha256.New()
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return types.StringNull(), err
+		}
+		digest := sha256.Sum256(data)
+		fmt.Fprintln(sum, hex.EncodeToString(digest[:]))
+	}
+	return types.StringValue(hex.EncodeToString(sum.Sum(nil))), nil
+}
+
+// plannedFiles are the bundle files of the planned installations, when the
+// plan knows them all.
+func plannedFiles(installations types.List) ([]string, bool) {
+	if installations.IsUnknown() {
+		return nil, false
+	}
+	var files []string
+	for _, element := range installations.Elements() {
+		installation, ok := element.(types.Object)
+		if !ok || installation.IsUnknown() {
+			return nil, false
+		}
+		file, ok := installation.Attributes()["file"].(types.String)
+		if !ok || file.IsUnknown() {
+			return nil, false
+		}
+		if !file.IsNull() {
+			files = append(files, file.ValueString())
+		}
+	}
+	return files, true
+}
+
+func installationFiles(installations []nemoStackInstallationModel) []string {
+	var files []string
+	for _, installation := range installations {
+		if !installation.File.IsNull() {
+			files = append(files, installation.File.ValueString())
+		}
+	}
+	return files
 }

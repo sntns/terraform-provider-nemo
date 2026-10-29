@@ -23,6 +23,7 @@ import (
 var (
 	_ resource.Resource                = &nemoStackResource{}
 	_ resource.ResourceWithImportState = &nemoStackResource{}
+	_ resource.ResourceWithModifyPlan  = &nemoStackResource{}
 )
 
 // dockerName is what Docker accepts in the names nemo gives after the stack.
@@ -41,6 +42,7 @@ type nemoStackResourceModel struct {
 	Installations  []nemoStackInstallationModel    `tfsdk:"installations"`
 	PurgeOnDestroy types.Bool                      `tfsdk:"purge_on_destroy"`
 	Timeouts       timeouts.Value                  `tfsdk:"timeouts"`
+	ContentHash    types.String                    `tfsdk:"content_hash"`
 	Manifest       types.String                    `tfsdk:"manifest"`
 }
 
@@ -165,7 +167,7 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 						Optional:            true,
 					},
 					"file": schema.StringAttribute{
-						MarkdownDescription: "A `bundle.json`, instead of `remote` or `repository`. Terraform compares its path, not its content: a bundle rebuilt at the same path is deployed by the next apply that changes the stack.",
+						MarkdownDescription: "A `bundle.json`, instead of `remote` or `repository`: its content is followed by `content_hash`.",
 						Optional:            true,
 					},
 					"parameters": schema.MapAttribute{
@@ -189,6 +191,11 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 				UpdateDescription: "How long an apply may take, every installation included. Default: as long as nemo's actions take.",
 				DeleteDescription: "How long destroying the stack may take. Default: as long as nemo's actions take.",
 			}),
+			"content_hash": schema.StringAttribute{
+				MarkdownDescription: "The SHA-256 of the installations' bundle files, in their order, computed at plan time: " +
+					"a bundle rebuilt at the same path changes it, and the next apply deploys it.",
+				Computed: true,
+			},
 			"manifest": schema.StringAttribute{
 				MarkdownDescription: "The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, " +
 					"its status and its logs, from where it reaches the target. Its paths are absolute, from where Terraform runs, " +
@@ -402,6 +409,15 @@ func (r *nemoStackResource) Read(ctx context.Context, req resource.ReadRequest, 
 	}
 
 	refreshInstallations(ctx, &state, present, &resp.Diagnostics)
+	// An imported stack: its bundles' files as they are now.
+	if state.ContentHash.IsNull() {
+		hash, err := contentHash(installationFiles(state.Installations))
+		if err != nil {
+			resp.Diagnostics.AddError("nemo stack read failed", err.Error())
+			return
+		}
+		state.ContentHash = hash
+	}
 	state.Manifest = encodeManifest(expandStack(ctx, state, &resp.Diagnostics), &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -427,6 +443,30 @@ func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// ModifyPlan computes content_hash from the bundle files the plan gives, so
+// that a bundle rebuilt at the same path changes the plan.
+func (r *nemoStackResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+
+	var installations types.List
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("installations"), &installations)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	hash := types.StringUnknown()
+	if files, known := plannedFiles(installations); known {
+		var err error
+		if hash, err = contentHash(files); err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("installations"), "nemo stack bundle unreadable", err.Error())
+			return
+		}
+	}
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), hash)...)
 }
 
 func (r *nemoStackResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

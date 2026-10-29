@@ -104,7 +104,7 @@ output "manifest" {
 ### Read-Only
 
 - `id` (String) The stack's name.
-- `manifest` (String, Sensitive) The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, its status and its logs, from where it reaches the target. Its credentials given by `value` are in it.
+- `manifest` (String, Sensitive) The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, its status and its logs, from where it reaches the target. Its paths are absolute, from where Terraform runs, and its credentials given by `value` are in it.
 
 <a id="nestedatt--installations"></a>
 ### Nested Schema for `installations`

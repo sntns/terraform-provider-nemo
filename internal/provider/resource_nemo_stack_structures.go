@@ -4,46 +4,70 @@ import (
 	"cmp"
 	"context"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/cnabio/cnab-go/secrets/host"
 	"github.com/cnabio/cnab-go/valuesource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"github.com/sntns/nemo/pkg/credentials"
 	"github.com/sntns/nemo/pkg/stack"
 	"github.com/sntns/nemo/pkg/storage"
 	"github.com/sntns/nemo/pkg/target"
 )
 
-// expandStack is the stack as nemo reads it, its records on its target.
+// expandStack is the stack as nemo reads it, its records on its target, and
+// its paths absolute from where Terraform runs, as nemo makes a manifest's
+// from its directory.
 func expandStack(ctx context.Context, model nemoStackResourceModel, diags *diag.Diagnostics) stack.Stack {
+	directory, err := os.Getwd()
+	if err != nil {
+		diags.AddError("nemo stack paths failed", err.Error())
+	}
 	manifest := stack.Stack{
 		Name:        model.Name.ValueString(),
-		Target:      expandTarget(ctx, model.Target, diags),
+		Target:      expandTarget(ctx, model.Target, directory, diags),
 		Installer:   expandInstaller(model.Installer),
 		Remote:      model.Remote.ValueString(),
 		Records:     stack.RecordsTarget,
 		Parameters:  expandStrings(ctx, model.Parameters, diags),
-		Credentials: expandCredentials(model.Credentials),
+		Credentials: expandCredentials(model.Credentials, directory),
+	}
+	if layout, ok := strings.CutPrefix(manifest.Remote, "oci:"); ok {
+		manifest.Remote = "oci:" + absolute(layout, directory)
 	}
 	for _, installation := range model.Installations {
+		file := installation.File.ValueString()
+		if file != "" {
+			file = absolute(file, directory)
+		}
 		manifest.Installations = append(manifest.Installations, storage.InstallationSpec{
 			Name:  installation.Name.ValueString(),
 			Stack: manifest.Name,
 			Bundle: storage.BundleReference{
 				Repository: installation.Repository.ValueString(),
 				Version:    installation.Version.ValueString(),
-				File:       installation.File.ValueString(),
+				File:       file,
 			},
 			Parameters:  expandStrings(ctx, installation.Parameters, diags),
-			Credentials: expandCredentials(installation.Credentials),
+			Credentials: expandCredentials(installation.Credentials, directory),
 		})
 	}
 	return manifest
 }
 
-func expandTarget(ctx context.Context, model *nemoStackTargetModel, diags *diag.Diagnostics) target.Target {
+func absolute(path, directory string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(directory, path)
+}
+
+func expandTarget(ctx context.Context, model *nemoStackTargetModel, directory string, diags *diag.Diagnostics) target.Target {
 	if model == nil {
 		return target.Target{}
 	}
@@ -56,7 +80,7 @@ func expandTarget(ctx context.Context, model *nemoStackTargetModel, diags *diag.
 		},
 	}
 	if tls := model.TLS; tls != nil {
-		given.TLS = &target.TLS{CA: expandSource(tls.CA), Cert: expandSource(tls.Cert), Key: expandSource(tls.Key)}
+		given.TLS = &target.TLS{CA: expandSource(tls.CA, directory), Cert: expandSource(tls.Cert, directory), Key: expandSource(tls.Key, directory)}
 	}
 	for name, volume := range model.Volumes {
 		if given.Volumes == nil {
@@ -86,25 +110,27 @@ func expandInstaller(model *nemoStackInstallerModel) target.Installer {
 	return installer
 }
 
-// expandSource is the one source the validator lets the model give.
-func expandSource(model *nemoStackSourceModel) *valuesource.Source {
+// expandSource is the one source the validator lets the model give, a path
+// made absolute from directory.
+func expandSource(model *nemoStackSourceModel, directory string) *valuesource.Source {
 	if model == nil {
 		return nil
 	}
 	for key, value := range map[string]types.String{host.SourcePath: model.Path, host.SourceEnv: model.Env, host.SourceCommand: model.Command, host.SourceValue: model.Value} {
 		if !value.IsNull() {
-			return &valuesource.Source{Key: key, Value: value.ValueString()}
+			source := credentials.Absolute(valuesource.Strategy{Source: valuesource.Source{Key: key, Value: value.ValueString()}}, directory).Source
+			return &source
 		}
 	}
 	return nil
 }
 
 // expandCredentials are the credentials as nemo reads them, by name.
-func expandCredentials(credentials map[string]nemoStackSourceModel) []valuesource.Strategy {
+func expandCredentials(sources map[string]nemoStackSourceModel, directory string) []valuesource.Strategy {
 	var strategies []valuesource.Strategy
-	for _, name := range slices.Sorted(maps.Keys(credentials)) {
-		source := credentials[name]
-		if read := expandSource(&source); read != nil {
+	for _, name := range slices.Sorted(maps.Keys(sources)) {
+		source := sources[name]
+		if read := expandSource(&source, directory); read != nil {
 			strategies = append(strategies, valuesource.Strategy{Name: name, Source: *read})
 		}
 	}

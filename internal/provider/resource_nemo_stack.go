@@ -1,0 +1,302 @@
+package provider
+
+import (
+	"context"
+	"fmt"
+	"regexp"
+	"strings"
+
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"github.com/sntns/nemo/pkg/target"
+)
+
+var (
+	_ resource.Resource                = &nemoStackResource{}
+	_ resource.ResourceWithImportState = &nemoStackResource{}
+)
+
+// dockerName is what Docker accepts in the names nemo gives after the stack.
+var dockerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
+type nemoStackResource struct{}
+
+func NewNemoStackResource() resource.Resource {
+	return &nemoStackResource{}
+}
+
+func (r *nemoStackResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_stack"
+}
+
+func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		MarkdownDescription: "A stack: bundles deployed together on one target, as nemo deploys a manifest with `nemo up`. " +
+			"Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, " +
+			"and uninstalls those it no longer lists. Reading it reads what the target runs, so that an installation changed by hand " +
+			"shows in the next plan. Destroying it uninstalls every installation.\n\n" +
+			"The records of its installations are kept on its target (`records: target` in nemo's manifest): " +
+			"nemo reads them from any machine that imported `manifest`, and refuses to write the stack without `--force`.\n\n" +
+			"nemo bounds each action on an installation, by its `nemo-timeout` parameter: `5m` unless the stack's `parameters` give another. " +
+			"`timeouts` bounds the whole operation on top of it; without it, Terraform waits as long as nemo does.",
+		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
+				MarkdownDescription: "The stack's name.",
+				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"name": schema.StringAttribute{
+				MarkdownDescription: "The stack's name: Swarm names its services `<name>_<service>`, in 63 characters. Changing it replaces the stack.",
+				Required:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.RegexMatches(dockerName, "must be letters, digits, _ . and - only")},
+			},
+			"target":    targetSchema(),
+			"installer": installerSchema(),
+			"remote": schema.StringAttribute{
+				MarkdownDescription: "Where the bundles of the installations that give a version alone are: a template of " +
+					"`{{ .Component }}`, the installation's name, and `{{ .Version }}`, its version, such as " +
+					"`docker://ghcr.io/sntns/{{ .Component }}:{{ .Version }}`.",
+				Optional: true,
+			},
+			"parameters": schema.MapAttribute{
+				MarkdownDescription: "Parameters, by name, for every installation whose bundle declares them. An installation's own come over them.",
+				ElementType:         types.StringType,
+				Optional:            true,
+			},
+			"credentials": credentialsSchema("Credentials, by name, for every installation whose bundle declares them. An installation's own come over them."),
+			"installations": schema.ListNestedAttribute{
+				MarkdownDescription: "The installations of the stack, one per bundle, installed in the order of their dependencies.",
+				Required:            true,
+				NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
+					"name": schema.StringAttribute{
+						MarkdownDescription: "The installation's name, its bundle's.",
+						Required:            true,
+					},
+					"version": schema.StringAttribute{
+						MarkdownDescription: "The bundle's version: with `remote`, or with `repository`. Reading the stack sets the version deployed.",
+						Optional:            true,
+					},
+					"repository": schema.StringAttribute{
+						MarkdownDescription: "The bundle's repository in a registry, instead of `remote`: `ghcr.io/sntns/whoami`.",
+						Optional:            true,
+					},
+					"file": schema.StringAttribute{
+						MarkdownDescription: "A `bundle.json`, instead of `remote` or `repository`.",
+						Optional:            true,
+					},
+					"parameters": schema.MapAttribute{
+						MarkdownDescription: "This installation's parameters, over the stack's.",
+						ElementType:         types.StringType,
+						Optional:            true,
+					},
+					"credentials": credentialsSchema("This installation's credentials, over the stack's."),
+				}},
+			},
+			"purge_on_destroy": schema.BoolAttribute{
+				MarkdownDescription: "Destroying the stack also removes its volumes, **data included**. Default: `false`, the volumes are kept for the next install.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
+			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
+				Create: true, Read: true, Update: true, Delete: true,
+				CreateDescription: "How long the first apply may take, every installation included. Default: as long as nemo's actions take.",
+				ReadDescription:   "How long reading the stack may take. Default: as long as it takes.",
+				UpdateDescription: "How long an apply may take, every installation included. Default: as long as nemo's actions take.",
+				DeleteDescription: "How long destroying the stack may take. Default: as long as nemo's actions take.",
+			}),
+			"manifest": schema.StringAttribute{
+				MarkdownDescription: "The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, " +
+					"its status and its logs, from where it reaches the target. Its credentials given by `value` are in it.",
+				Computed:  true,
+				Sensitive: true,
+			},
+		},
+	}
+}
+
+func targetSchema() schema.Attribute {
+	options := schema.MapAttribute{
+		MarkdownDescription: "The driver's options.",
+		ElementType:         types.StringType,
+		Optional:            true,
+	}
+	return schema.SingleNestedAttribute{
+		MarkdownDescription: "Where the stack is deployed: one Docker, and the orchestrator that deploys there.",
+		Required:            true,
+		Attributes: map[string]schema.Attribute{
+			"orchestrator": schema.StringAttribute{
+				MarkdownDescription: "`swarm` or `compose`. Changing it replaces the stack.",
+				Required:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.OneOf(target.Swarm, target.Compose)},
+			},
+			"host": schema.StringAttribute{
+				MarkdownDescription: "The address of the target's Docker: `tcp://`, `ssh://user@host` or `unix://`. " +
+					"With neither `host` nor `context`, the environment's: `DOCKER_HOST`, the current docker context, or the local socket.",
+				Optional:   true,
+				Validators: []validator.String{stringvalidator.ConflictsWith(path.MatchRelative().AtParent().AtName("context"))},
+			},
+			"context": schema.StringAttribute{
+				MarkdownDescription: "A docker context to reach the target with, instead of `host`.",
+				Optional:            true,
+			},
+			"tls": schema.SingleNestedAttribute{
+				MarkdownDescription: "The TLS of a `tcp://` host, in PEM, instead of `DOCKER_CERT_PATH` and `DOCKER_TLS_VERIFY`. " +
+					"Each part is read from a source, as a credential is, and the manifest keeps the source.",
+				Optional: true,
+				Attributes: map[string]schema.Attribute{
+					"ca":   sourceSchema("The CA of the daemon's certificate. Default: the system's.", false),
+					"cert": sourceSchema("The client's certificate, with its key.", false),
+					"key":  sourceSchema("The client's key, with its certificate.", false),
+				},
+			},
+			"images": schema.StringAttribute{
+				MarkdownDescription: "How the images reach the target: `registry`, which each node pulls them from, or `load`, into its one daemon. Default: `registry`.",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString(target.ImagesRegistry),
+				Validators:          []validator.String{stringvalidator.OneOf(target.ImagesRegistry, target.ImagesLoad)},
+			},
+			"volumes": schema.MapNestedAttribute{
+				MarkdownDescription: "The target's volume types, by name: what a volume of a bundle with that `x-nemo-volume` type is made of. " +
+					"The driver, its options and the provisioned directory are templates of `{{.Stack}}`, `{{.Name}}` and `{{.Options}}`.",
+				Optional: true,
+				NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
+					"driver":  schema.StringAttribute{MarkdownDescription: "The volume driver. Default: `local`.", Optional: true},
+					"options": options,
+					"provision": schema.SingleNestedAttribute{
+						MarkdownDescription: "A directory to create for each volume before the volume, in the storage `volume` mounts.",
+						Optional:            true,
+						Attributes: map[string]schema.Attribute{
+							"directory": schema.StringAttribute{MarkdownDescription: "The directory, in the storage.", Required: true},
+							"volume": schema.SingleNestedAttribute{
+								MarkdownDescription: "The storage the directory is created in.",
+								Required:            true,
+								Attributes: map[string]schema.Attribute{
+									"driver":  schema.StringAttribute{MarkdownDescription: "The volume driver. Default: `local`.", Optional: true},
+									"options": options,
+								},
+							},
+						},
+					},
+				}},
+			},
+		},
+	}
+}
+
+func installerSchema() schema.Attribute {
+	return schema.SingleNestedAttribute{
+		MarkdownDescription: "Where gill, the installer, runs: on the target, the default, or as a Job in a Kubernetes cluster that reaches the target over `tcp://`.",
+		Optional:            true,
+		Attributes: map[string]schema.Attribute{
+			"driver": schema.StringAttribute{
+				MarkdownDescription: "`docker` or `kubernetes`. Default: `docker`.",
+				Optional:            true,
+				Validators:          []validator.String{stringvalidator.OneOf(target.DriverDocker, target.DriverKubernetes)},
+			},
+			"kubernetes": schema.SingleNestedAttribute{
+				MarkdownDescription: "The cluster of the `kubernetes` driver.",
+				Optional:            true,
+				Attributes: map[string]schema.Attribute{
+					"namespace":  schema.StringAttribute{MarkdownDescription: "The namespace of the Job.", Optional: true},
+					"kubeconfig": schema.StringAttribute{MarkdownDescription: "The kubeconfig of the cluster. Default: `KUBECONFIG`, `~/.kube/config`, else the cluster Terraform runs in.", Optional: true},
+				},
+			},
+		},
+	}
+}
+
+// sourceAttributes are those of a source, as nemo reads a credential's:
+// exactly one of a file, a variable, a command or a value, read where
+// Terraform runs.
+func sourceAttributes() map[string]schema.Attribute {
+	return map[string]schema.Attribute{
+		"path":    schema.StringAttribute{MarkdownDescription: "A file.", Optional: true},
+		"env":     schema.StringAttribute{MarkdownDescription: "An environment variable.", Optional: true},
+		"command": schema.StringAttribute{MarkdownDescription: "A command, whose output is the value.", Optional: true},
+		"value":   schema.StringAttribute{MarkdownDescription: "The value itself.", Optional: true, Sensitive: true},
+	}
+}
+
+func sourceSchema(description string, required bool) schema.Attribute {
+	return schema.SingleNestedAttribute{
+		MarkdownDescription: description,
+		Optional:            !required,
+		Required:            required,
+		Attributes:          sourceAttributes(),
+		Validators:          []validator.Object{oneSource{}},
+	}
+}
+
+// credentialsSchema is a map of credential sources.
+func credentialsSchema(description string) schema.Attribute {
+	return schema.MapNestedAttribute{
+		MarkdownDescription: description + " Each is read where Terraform runs, from one source.",
+		Optional:            true,
+		NestedObject: schema.NestedAttributeObject{
+			Attributes: sourceAttributes(),
+			Validators: []validator.Object{oneSource{}},
+		},
+	}
+}
+
+// ImportState takes a stack nemo deployed: its name, after the address of
+// its Docker when the environment's is not the one, tcp://10.1.0.10:2376/shop.
+// Reading the stack then fills the rest from its records on the target.
+func (r *nemoStackResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	host, name, err := importID(req.ID)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid import ID", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), name)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("name"), name)...)
+	if host != "" {
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("target").AtName("host"), host)...)
+	}
+}
+
+// importID splits an import ID into the Docker's address and the stack's
+// name: NAME, or HOST/NAME.
+func importID(id string) (string, string, error) {
+	host, name := "", id
+	if strings.Contains(id, "://") {
+		index := strings.LastIndex(id, "/")
+		host, name = id[:index], id[index+1:]
+	}
+	if !dockerName.MatchString(name) {
+		return "", "", fmt.Errorf("%q: the stack's name, after the address of its Docker when the environment's is not the one: shop, or tcp://10.1.0.10:2376/shop", id)
+	}
+	return host, name, nil
+}
+
+// The resource's actions come once its schema is agreed on.
+
+func (r *nemoStackResource) Create(_ context.Context, _ resource.CreateRequest, resp *resource.CreateResponse) {
+	resp.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
+}
+
+func (r *nemoStackResource) Read(_ context.Context, _ resource.ReadRequest, resp *resource.ReadResponse) {
+	resp.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
+}
+
+func (r *nemoStackResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
+	resp.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
+}
+
+func (r *nemoStackResource) Delete(_ context.Context, _ resource.DeleteRequest, resp *resource.DeleteResponse) {
+	resp.Diagnostics.AddError("Not implemented yet", "This version of the nemo provider has the schema of nemo_stack only.")
+}

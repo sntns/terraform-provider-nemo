@@ -1,0 +1,4 @@
+/terraform-provider-nemo
+/bin/
+.terraform/
+*.tfstate*

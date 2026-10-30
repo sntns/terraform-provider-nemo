@@ -2,14 +2,14 @@
 page_title: "nemo_stack Resource - nemo"
 subcategory: ""
 description: |-
-  A stack: bundles deployed together on one target, as nemo deploys a manifest with nemo up. Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, and uninstalls those it no longer lists. Reading it reads the records of its installations on the target, so that an installation nemo changed with --force shows in the next plan. Destroying it uninstalls every installation. A stack its target has already is imported, not created.
+  A stack: bundles deployed together on one target, as nemo deploys a manifest with nemo up. Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, and uninstalls those it no longer lists. Reading it reads the records of its installations on the target, so that an installation nemo changed with --force shows in the next plan. Destroying it uninstalls every installation. A stack its target has already is imported, not created. Planning loads the bundles it installs or upgrades, from their registry, layout or bundle.json: one that is not there, or is another installation's, fails the plan rather than the apply.
   The records of its installations are kept on its target (records: target in nemo's manifest): nemo reads them from any machine that imported manifest, and refuses to write the stack without --force.
   nemo bounds each action on an installation, by its nemo-timeout parameter: 5m unless the stack's parameters give another. timeouts bounds the whole operation on top of it; without it, Terraform waits as long as nemo does.
 ---
 
 # nemo_stack (Resource)
 
-A stack: bundles deployed together on one target, as nemo deploys a manifest with `nemo up`. Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, and uninstalls those it no longer lists. Reading it reads the records of its installations on the target, so that an installation nemo changed with `--force` shows in the next plan. Destroying it uninstalls every installation. A stack its target has already is imported, not created.
+A stack: bundles deployed together on one target, as nemo deploys a manifest with `nemo up`. Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, and uninstalls those it no longer lists. Reading it reads the records of its installations on the target, so that an installation nemo changed with `--force` shows in the next plan. Destroying it uninstalls every installation. A stack its target has already is imported, not created. Planning loads the bundles it installs or upgrades, from their registry, layout or `bundle.json`: one that is not there, or is another installation's, fails the plan rather than the apply.
 
 The records of its installations are kept on its target (`records: target` in nemo's manifest): nemo reads them from any machine that imported `manifest`, and refuses to write the stack without `--force`.
 

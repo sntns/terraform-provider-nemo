@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -227,4 +228,45 @@ func installationFiles(installations []nemoStackInstallationModel) []string {
 		}
 	}
 	return files
+}
+
+// checkBundles loads the bundle of each installation the plan adds or takes
+// from another source, as the apply will: one that is not there, or is not
+// the installation's, fails the plan. A bundle.json, rebuilt at its path,
+// is read at every plan. An installation whose bundle an apply computes is
+// left to that apply.
+func checkBundles(ctx context.Context, model nemoStackResourceModel, planned, current stack.Stack, diags *diag.Diagnostics) {
+	if model.Remote.IsUnknown() {
+		return
+	}
+	deployed := map[string]string{}
+	for _, installation := range current.Installations {
+		if source, err := current.Source(installation); err == nil {
+			deployed[installation.Name] = source
+		}
+	}
+	for i, installation := range planned.Installations {
+		given := model.Installations[i]
+		if given.Version.IsUnknown() || given.Repository.IsUnknown() || given.File.IsUnknown() {
+			continue
+		}
+		at := path.Root("installations").AtListIndex(i)
+		source, err := planned.Source(installation)
+		if err != nil {
+			diags.AddAttributeError(at, "nemo stack bundle unknown", err.Error())
+			continue
+		}
+		if installation.Bundle.File == "" && deployed[installation.Name] == source {
+			continue
+		}
+		loaded, err := nemo.LoadBundle(ctx, source)
+		if err != nil {
+			diags.AddAttributeError(at, "nemo stack bundle unreadable", fmt.Sprintf("%s: %s", source, err))
+			continue
+		}
+		if loaded.Definition.Name != installation.Name {
+			diags.AddAttributeError(at, "nemo stack bundle of another installation",
+				fmt.Sprintf("the bundle at %s is %s, not %s: an installation is named after its bundle", source, loaded.Definition.Name, installation.Name))
+		}
+	}
 }

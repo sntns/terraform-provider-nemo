@@ -7,6 +7,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -140,7 +141,9 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 			"Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, " +
 			"and uninstalls those it no longer lists. Reading it reads the records of its installations on the target, so that an installation " +
 			"nemo changed with `--force` shows in the next plan. Destroying it uninstalls every installation. " +
-			"A stack its target has already is imported, not created.\n\n" +
+			"A stack its target has already is imported, not created. " +
+			"Planning loads the bundles it installs or upgrades, from their registry, layout or `bundle.json`: " +
+			"one that is not there, or is another installation's, fails the plan rather than the apply.\n\n" +
 			"The records of its installations are kept on its target (`records: target` in nemo's manifest): " +
 			"nemo reads them from any machine that imported `manifest`, and refuses to write the stack without `--force`.\n\n" +
 			"nemo bounds each action on an installation, by its `nemo-timeout` parameter: `5m` unless the stack's `parameters` give another. " +
@@ -488,7 +491,9 @@ func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateReque
 }
 
 // ModifyPlan computes content_hash from the bundle files the plan gives, so
-// that a bundle rebuilt at the same path changes the plan.
+// that a bundle rebuilt at the same path changes the plan, and loads the
+// bundles the plan installs anew, so that one that is not there fails the
+// plan rather than the apply.
 func (r *nemoStackResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if req.Plan.Raw.IsNull() {
 		return
@@ -509,6 +514,14 @@ func (r *nemoStackResource) ModifyPlan(ctx context.Context, req resource.ModifyP
 		}
 	}
 	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), hash)...)
+
+	// A plan with values an apply computes is checked by that apply.
+	var planned, current nemoStackResourceModel
+	if req.Plan.Get(ctx, &planned).HasError() || (!req.State.Raw.IsNull() && req.State.Get(ctx, &current).HasError()) {
+		return
+	}
+	var ignored diag.Diagnostics
+	checkBundles(ctx, planned, expandStack(ctx, r.connection.over(planned), &ignored), expandStack(ctx, r.connection.over(current), &ignored), &resp.Diagnostics)
 }
 
 func (r *nemoStackResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

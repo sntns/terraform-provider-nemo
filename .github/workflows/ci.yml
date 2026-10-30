@@ -1,16 +1,51 @@
 name: CI
 
-# release-please's pull requests change the changelog and the version only,
-# of code that passed it: their jobs are skipped.
+# Every branch is checked on each push; main takes them through pull requests
+# whose CI passed, and runs the release workflow alone. The stages run one after
+# the other, each only once the previous one passed, and only when the push
+# changes code: the CI job alone is required, and it passes when they all
+# passed, or when nothing was to check.
 on:
-  pull_request:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  lint:
-    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # release-please's branches change the changelog and the version only,
+      # of code that passed; the documentation does not change code, apart
+      # from docs, which the schema generates.
+      - id: diff
+        run: |
+          if [[ "$GITHUB_REF_NAME" == release-please--* ]]; then
+            echo code=false >> "$GITHUB_OUTPUT"
+          elif base=$(git merge-base origin/main HEAD) &&
+            git diff --quiet "$base" HEAD -- . ':!*.md' &&
+            git diff --quiet "$base" HEAD -- docs; then
+            echo code=false >> "$GITHUB_OUTPUT"
+          else
+            echo code=true >> "$GITHUB_OUTPUT"
+          fi
+
+  check:
+    name: Check
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -20,15 +55,6 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.15
-
-  test:
-    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
       - run: go test -race ./...
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -38,10 +64,28 @@ jobs:
           go generate ./...
           git diff --exit-code docs || (echo "::error::run go generate ./... and commit docs" && exit 1)
 
+  build:
+    name: Build
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build the release's archives and SHA256SUMS, unsigned and unpublished
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=sign,publish
+
   # The provider is published on both registries: each CLI runs the
   # acceptance tests.
-  acceptance:
-    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+  integration:
+    name: Integration
+    needs: build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -67,18 +111,18 @@ jobs:
       - name: Deploy, import and destroy stacks on the runner's Docker, with ${{ matrix.cli }}
         run: make testacc
 
-  release:
-    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+  ci:
+    name: CI
+    needs: [changes, check, build, integration]
+    if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - name: Build the release's archives and SHA256SUMS, unsigned and unpublished
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          version: "~> v2"
-          args: release --snapshot --clean --skip=sign,publish
+      - name: Every stage passed, or there was no code to check
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          CODE: ${{ needs.changes.outputs.code }}
+        run: |
+          echo "$NEEDS" | jq -e --arg code "$CODE" '
+            .changes.result == "success" and
+            ([.check.result, .build.result, .integration.result] | all(. == "success" or ($code == "false" and . == "skipped")))
+          ' > /dev/null || { echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'; exit 1; }

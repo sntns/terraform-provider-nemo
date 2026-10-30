@@ -1,0 +1,53 @@
+---
+page_title: "Swarm with several managers"
+subcategory: "Guides"
+description: |-
+  Keep a stack's records on a storage every manager of a swarm mounts, so that each finds the same installations.
+---
+
+# Swarm with several managers
+
+The provider keeps the records of a stack's installations, their state and every action run on them, on its target: in a volume `nemo-records-<stack>` of the Docker it reaches. Terraform reads them at each plan, and `nemo status` from any machine that imported the stack's `manifest`.
+
+On a single Docker, or a swarm reached always through the same manager, a local volume is enough: it is the default. On a swarm of several managers, each has its own local volumes. Reached through another manager, the stack would find no records: give the target a volume type `records`, on a storage every manager mounts.
+
+## The `records` volume type
+
+The volume types of a target, `target.volumes`, say what a volume of a bundle with that `x-nemo-volume` type is made of. The type `records` makes the volume of the stack's records, with `nemo-records` as its `{{.Name}}`. On NFS:
+
+```terraform
+resource "nemo_stack" "shop" {
+  name = "shop"
+  # ...
+  target = {
+    orchestrator = "swarm"
+    host         = "tcp://10.1.0.10:2376"
+    # tls = { ... }
+
+    volumes = {
+      records = {
+        driver  = "local"
+        options = { type = "nfs", o = "addr=10.0.0.20,rw,nfsvers=4", device = ":/exports/{{.Stack}}/{{.Name}}" }
+        provision = {
+          directory = "{{.Stack}}/{{.Name}}"
+          volume    = { driver = "local", options = { type = "nfs", o = "addr=10.0.0.20,rw,nfsvers=4", device = ":/exports" } }
+        }
+      }
+    }
+  }
+}
+```
+
+`provision` creates the directory `/exports/shop/nemo-records` on the storage before the volume is made of it. Whichever manager the provider reaches, `tcp://10.1.0.10:2376` or `tcp://10.1.0.11:2376`, it makes the volume of the same directory and finds the same records.
+
+The bundles' data volumes are defined the same way, under the names of their `x-nemo-volume` types, so that a service finds its data on whichever node Swarm schedules it.
+
+## Adding the type to a stack
+
+A stack whose target gets the type moves its records to it at its next apply, on each Docker that has the volume: the provider copies them out, recreates the volume of the type, and copies them in.
+
+A volume that exists is never recreated: changing a type's definition changes only the volumes made after it.
+
+## One writer at a time
+
+One writer changes a stack at a time. On a swarm manager, the one writing creates a Swarm config named after the stack, which the whole swarm keeps unique: an apply and a `nemo up --force` at the same time can't both write it, and the second stops with the stack busy. A writer killed meanwhile leaves the config: `docker config rm nemo-records-<stack>` on a manager frees the stack.

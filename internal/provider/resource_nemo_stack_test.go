@@ -157,3 +157,22 @@ func checkNemoStackDestroyed(name string) resource.TestCheckFunc {
 		return err
 	}
 }
+
+// A bundle that is not the installation's, or not there, fails the plan,
+// before anything is deployed.
+func TestAccNemoStack_planChecks(t *testing.T) {
+	name := "tf-acc-checks"
+	bundle, err := filepath.Abs(filepath.Join("..", "..", "testdata", "bundles", "hello", "bundle.json"))
+	require.NoError(t, err)
+	config := func(test string) string {
+		return fmt.Sprintf(loadTestConfiguration(t, "nemo_stack", test), name, bundle)
+	}
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config("testAccNemoStack_checks"), PlanOnly: true, ExpectError: regexp.MustCompile(`is hello, not other`)},
+			{Config: config("testAccNemoStack_checks_missing"), PlanOnly: true, ExpectError: regexp.MustCompile(`nemo stack bundle unreadable`)},
+		},
+	})
+}

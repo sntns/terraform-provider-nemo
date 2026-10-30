@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.0](https://github.com/sntns/terraform-provider-nemo/compare/v0.1.0...v0.2.0) (2026-10-30)
+
+
+### Features
+
+* check the bundles a plan installs, before the apply ([c936e68](https://github.com/sntns/terraform-provider-nemo/commit/c936e6868814cf926c9993e40f56b9f2497f4ba6))
+* find the stacks of a Docker with terraform query, and import them by identity ([78d235f](https://github.com/sntns/terraform-provider-nemo/commit/78d235f2ab0d5808dc882d884ebe75cb4a376634))
+* give the Docker of the stacks once, on the provider ([a252150](https://github.com/sntns/terraform-provider-nemo/commit/a2521506f3ad07b686e42004b872db7b8248c86e))
+* the data sources nemo_bundle and nemo_stack ([b77e3f5](https://github.com/sntns/terraform-provider-nemo/commit/b77e3f5e53d9fecbe1aef16913ee0b32f2bdc9a2))
+
 ## 0.1.0 (2026-10-29)
 
 

@@ -38,18 +38,33 @@ jobs:
           go generate ./...
           git diff --exit-code docs || (echo "::error::run go generate ./... and commit docs" && exit 1)
 
+  # The provider is published on both registries: each CLI runs the
+  # acceptance tests.
   acceptance:
     if: ${{ !startsWith(github.head_ref, 'release-please--') }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cli: [terraform, tofu]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: hashicorp/setup-terraform@v3
+      - if: matrix.cli == 'terraform'
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
-      - name: Deploy, import and destroy stacks on the runner's Docker
+      - if: matrix.cli == 'tofu'
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_wrapper: false
+      - if: matrix.cli == 'tofu'
+        run: |
+          echo "TF_ACC_TERRAFORM_PATH=$(which tofu)" >> "$GITHUB_ENV"
+          echo "TF_ACC_PROVIDER_HOST=registry.opentofu.org" >> "$GITHUB_ENV"
+      - name: Deploy, import and destroy stacks on the runner's Docker, with ${{ matrix.cli }}
         run: make testacc
 
   release:

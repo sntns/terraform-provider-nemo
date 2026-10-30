@@ -35,6 +35,7 @@ On the [Terraform Registry](https://registry.terraform.io/providers/sntns/nemo/l
 - [Getting started](docs/guides/getting-started.md): from a compose file to a stack deployed on your Docker.
 - [Secrets](docs/guides/secrets.md): credentials from a file, the environment, a command, or write-only.
 - [Swarm with several managers](docs/guides/swarm-records.md): the stack's records on a shared storage.
+- [Adopting stacks](docs/guides/adopting-stacks.md): `terraform query` and import.
 - [`nemo_stack`](docs/resources/stack.md): every setting of a stack.
 
 ## Development

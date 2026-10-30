@@ -7,6 +7,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/list"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -15,7 +16,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-var _ provider.Provider = &nemoProvider{}
+var (
+	_ provider.Provider                  = &nemoProvider{}
+	_ provider.ProviderWithListResources = &nemoProvider{}
+)
 
 type nemoProvider struct {
 	version string
@@ -100,10 +104,15 @@ func (p *nemoProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 	}
 	resp.ResourceData = &connection
 	resp.DataSourceData = &connection
+	resp.ListResourceData = &connection
 }
 
 func (p *nemoProvider) Resources(context.Context) []func() resource.Resource {
 	return []func() resource.Resource{NewNemoStackResource}
+}
+
+func (p *nemoProvider) ListResources(context.Context) []func() list.ListResource {
+	return []func() list.ListResource{NewNemoStackListResource}
 }
 
 func (p *nemoProvider) DataSources(context.Context) []func() datasource.DataSource {

@@ -24,12 +24,15 @@ var (
 	_ resource.Resource                = &nemoStackResource{}
 	_ resource.ResourceWithImportState = &nemoStackResource{}
 	_ resource.ResourceWithModifyPlan  = &nemoStackResource{}
+	_ resource.ResourceWithConfigure   = &nemoStackResource{}
 )
 
 // dockerName is what Docker accepts in the names nemo gives after the stack.
 var dockerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
-type nemoStackResource struct{}
+type nemoStackResource struct {
+	connection *nemoConnection
+}
 
 type nemoStackResourceModel struct {
 	ID             types.String                    `tfsdk:"id"`
@@ -123,6 +126,12 @@ func NewNemoStackResource() resource.Resource {
 
 func (r *nemoStackResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_stack"
+}
+
+func (r *nemoStackResource) Configure(_ context.Context, req resource.ConfigureRequest, _ *resource.ConfigureResponse) {
+	if connection, ok := req.ProviderData.(*nemoConnection); ok {
+		r.connection = connection
+	}
 }
 
 func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
@@ -237,7 +246,7 @@ func targetSchema() schema.Attribute {
 			},
 			"host": schema.StringAttribute{
 				MarkdownDescription: "The address of the target's Docker: `tcp://`, `ssh://user@host` or `unix://`. " +
-					"With neither `host` nor `context`, the environment's: `DOCKER_HOST`, the current docker context, or the local socket.",
+					"With neither `host` nor `context`, the provider's, with its `tls`; else the environment's: `DOCKER_HOST`, the current docker context, or the local socket.",
 				Optional:   true,
 				Validators: []validator.String{stringvalidator.ConflictsWith(path.MatchRelative().AtParent().AtName("context"))},
 			},
@@ -390,7 +399,7 @@ func (r *nemoStackResource) Create(ctx context.Context, req resource.CreateReque
 
 	ctx, cancel := bounded(ctx, plan.Timeouts.Create, &resp.Diagnostics)
 	defer cancel()
-	manifest := expandStack(ctx, plan, &resp.Diagnostics)
+	manifest := expandStack(ctx, r.connection.over(plan), &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -424,7 +433,7 @@ func (r *nemoStackResource) Read(ctx context.Context, req resource.ReadRequest, 
 
 	ctx, cancel := bounded(ctx, state.Timeouts.Read, &resp.Diagnostics)
 	defer cancel()
-	manifest := expandStack(ctx, state, &resp.Diagnostics)
+	manifest := expandStack(ctx, r.connection.over(state), &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -449,7 +458,7 @@ func (r *nemoStackResource) Read(ctx context.Context, req resource.ReadRequest, 
 		}
 		state.ContentHash = hash
 	}
-	state.Manifest = encodeManifest(expandStack(ctx, state, &resp.Diagnostics), &resp.Diagnostics)
+	state.Manifest = encodeManifest(expandStack(ctx, r.connection.over(state), &resp.Diagnostics), &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -464,7 +473,7 @@ func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateReque
 
 	ctx, cancel := bounded(ctx, plan.Timeouts.Update, &resp.Diagnostics)
 	defer cancel()
-	manifest := expandStack(ctx, plan, &resp.Diagnostics)
+	manifest := expandStack(ctx, r.connection.over(plan), &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -511,7 +520,7 @@ func (r *nemoStackResource) Delete(ctx context.Context, req resource.DeleteReque
 
 	ctx, cancel := bounded(ctx, state.Timeouts.Delete, &resp.Diagnostics)
 	defer cancel()
-	manifest := expandStack(ctx, state, &resp.Diagnostics)
+	manifest := expandStack(ctx, r.connection.over(state), &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}

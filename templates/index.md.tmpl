@@ -29,6 +29,12 @@ The provider embeds nemo's library: deploying needs no nemo CLI, only building b
 
 The provider is published on the [Terraform Registry](https://registry.terraform.io/providers/sntns/nemo) and the [OpenTofu Registry](https://search.opentofu.org/provider/sntns/nemo), as `sntns/nemo` on both.
 
+## Connection
+
+The provider's `host` or `context`, with its `tls`, is the Docker of every stack whose `target` gives neither `host` nor `context`: several stacks on one swarm give it once. A stack's own `target.host` or `target.context` comes over it. Changing it moves no stack: the next plan reads them on the new Docker.
+
+{{ .SchemaMarkdown | trimspace }}
+
 ## Guides
 
 - [Getting started](guides/getting-started): from a compose file to a stack deployed on your Docker.

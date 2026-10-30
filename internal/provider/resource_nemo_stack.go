@@ -26,6 +26,7 @@ var (
 	_ resource.ResourceWithImportState = &nemoStackResource{}
 	_ resource.ResourceWithModifyPlan  = &nemoStackResource{}
 	_ resource.ResourceWithConfigure   = &nemoStackResource{}
+	_ resource.ResourceWithIdentity    = &nemoStackResource{}
 )
 
 // dockerName is what Docker accepts in the names nemo gives after the stack.
@@ -380,6 +381,11 @@ func credentialsSchema(description string) schema.Attribute {
 // Reading the stack then fills the rest from its records on the target.
 func (r *nemoStackResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	host, name, err := importID(req.ID)
+	if req.ID == "" && req.Identity != nil {
+		var identity nemoStackIdentityModel
+		resp.Diagnostics.Append(req.Identity.Get(ctx, &identity)...)
+		host, name, err = identity.Host.ValueString(), identity.Name.ValueString(), nil
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid import ID", err.Error())
 		return
@@ -425,6 +431,7 @@ func (r *nemoStackResource) Create(ctx context.Context, req resource.CreateReque
 	}
 	// Saved even when an action failed: the stack is tainted, and the next apply replaces it.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	setIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
 }
 
 func (r *nemoStackResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -463,6 +470,7 @@ func (r *nemoStackResource) Read(ctx context.Context, req resource.ReadRequest, 
 	}
 	state.Manifest = encodeManifest(expandStack(ctx, r.connection.over(state), &resp.Diagnostics), &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	setIdentity(ctx, resp.Identity, state, &resp.Diagnostics)
 }
 
 func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -488,6 +496,7 @@ func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	setIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
 }
 
 // ModifyPlan computes content_hash from the bundle files the plan gives, so

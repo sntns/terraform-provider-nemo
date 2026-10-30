@@ -8,7 +8,7 @@ description: |-
 
 The nemo provider deploys applications made of containers on any Docker host, with [nemo](https://github.com/sntns/nemo): Compose on one machine, Swarm on many, without Kubernetes.
 
-[nemo](https://github.com/sntns/nemo) turns each compose file into a **bundle**: a versioned [CNAB](https://cnab.io) package of its services, their images pinned by digest, and the installer that deploys them. A **stack** says which bundles go on one target, and with which parameters and credentials. The provider's one resource, [`nemo_stack`](resources/stack), is that stack: each apply installs the bundles it lists, in the order of their dependencies, upgrades those installed and uninstalls those it no longer lists. The data source [`nemo_bundle`](data-sources/bundle) finds the latest version of a bundle in a registry, and [`nemo_stack`](data-sources/stack) reads a stack its target has.
+[nemo](https://github.com/sntns/nemo) turns each compose file into a **bundle**: a versioned [CNAB](https://cnab.io) package of its services, their images pinned by digest, and the installer that deploys them. A **stack** says which bundles go on one target, and with which parameters and credentials. The provider's one resource, [`nemo_stack`](resources/stack), is that stack: each apply installs the bundles it lists, in the order of their dependencies, upgrades those installed and uninstalls those it no longer lists. The data source [`nemo_bundle`](data-sources/bundle) finds the latest version of a bundle in a registry, and [`nemo_stack`](data-sources/stack) reads a stack its target has. With Terraform 1.14, the list resource `nemo_stack` finds every stack of a Docker for `terraform query`.
 
 {{ tffile "examples/provider/provider.tf" }}
 
@@ -40,6 +40,7 @@ The provider's `host` or `context`, with its `tls`, is the Docker of every stack
 - [Getting started](guides/getting-started): from a compose file to a stack deployed on your Docker.
 - [Secrets](guides/secrets): give credentials from a file, the environment, a command, or as a write-only value.
 - [Swarm with several managers](guides/swarm-records): keep the stack's records on a storage every manager mounts.
+- [Adopting stacks](guides/adopting-stacks): find the stacks a Docker has with `terraform query`, and import them.
 
 ## Support
 

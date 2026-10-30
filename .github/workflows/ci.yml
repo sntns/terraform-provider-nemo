@@ -42,8 +42,8 @@ jobs:
             echo code=true >> "$GITHUB_OUTPUT"
           fi
 
-  check:
-    name: Check
+  lint:
+    name: Lint
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
@@ -55,6 +55,16 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.15
+
+  test:
+    name: Test
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
       - run: go test -race ./...
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -66,7 +76,7 @@ jobs:
 
   build:
     name: Build
-    needs: check
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -113,7 +123,7 @@ jobs:
 
   ci:
     name: CI
-    needs: [changes, check, build, integration]
+    needs: [changes, lint, test, build, integration]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -124,5 +134,5 @@ jobs:
         run: |
           echo "$NEEDS" | jq -e --arg code "$CODE" '
             .changes.result == "success" and
-            ([.check.result, .build.result, .integration.result] | all(. == "success" or ($code == "false" and . == "skipped")))
+            ([.lint.result, .test.result, .build.result, .integration.result] | all(. == "success" or ($code == "false" and . == "skipped")))
           ' > /dev/null || { echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'; exit 1; }

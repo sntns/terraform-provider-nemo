@@ -99,6 +99,7 @@ func (p *nemoProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 		}
 	}
 	resp.ResourceData = &connection
+	resp.DataSourceData = &connection
 }
 
 func (p *nemoProvider) Resources(context.Context) []func() resource.Resource {
@@ -106,7 +107,7 @@ func (p *nemoProvider) Resources(context.Context) []func() resource.Resource {
 }
 
 func (p *nemoProvider) DataSources(context.Context) []func() datasource.DataSource {
-	return nil
+	return []func() datasource.DataSource{NewNemoBundleDataSource, NewNemoStackDataSource}
 }
 
 // over is the stack reaching the provider's Docker when its target gives

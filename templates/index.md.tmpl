@@ -8,7 +8,7 @@ description: |-
 
 The nemo provider deploys applications made of containers on any Docker host, with [nemo](https://github.com/sntns/nemo): Compose on one machine, Swarm on many, without Kubernetes.
 
-[nemo](https://github.com/sntns/nemo) turns each compose file into a **bundle**: a versioned [CNAB](https://cnab.io) package of its services, their images pinned by digest, and the installer that deploys them. A **stack** says which bundles go on one target, and with which parameters and credentials. The provider's one resource, [`nemo_stack`](resources/stack), is that stack: each apply installs the bundles it lists, in the order of their dependencies, upgrades those installed and uninstalls those it no longer lists.
+[nemo](https://github.com/sntns/nemo) turns each compose file into a **bundle**: a versioned [CNAB](https://cnab.io) package of its services, their images pinned by digest, and the installer that deploys them. A **stack** says which bundles go on one target, and with which parameters and credentials. The provider's one resource, [`nemo_stack`](resources/stack), is that stack: each apply installs the bundles it lists, in the order of their dependencies, upgrades those installed and uninstalls those it no longer lists. The data source [`nemo_bundle`](data-sources/bundle) finds the latest version of a bundle in a registry, and [`nemo_stack`](data-sources/stack) reads a stack its target has.
 
 {{ tffile "examples/provider/provider.tf" }}
 

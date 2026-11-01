@@ -1,62 +1,51 @@
 name: CI
 
-# Every branch is checked on each push; main takes them through pull requests
-# whose CI passed, and runs the release workflow alone. The stages run one after
-# the other, each only once the previous one passed, and only when the push
-# changes code: the CI job alone is required, and it passes when they all
-# passed, or when nothing was to check.
+# Pull requests, main and a weekly run, in three stages, each once the
+# previous one passed: the static checks, then the tests, then what a release
+# publishes. The label ci/validate-only keeps a pull request to the static
+# checks. The CI job alone is required.
 on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
-    branches-ignore: [main]
+    branches: [main]
+  schedule:
+    - cron: "23 5 * * 1"
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
-  changes:
-    name: Changes
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    outputs:
-      code: ${{ steps.diff.outputs.code }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
-      # release-please's branches change the changelog and the version only,
-      # of code that passed; the documentation does not change code, apart
-      # from docs, which the schema generates.
-      - id: diff
-        run: |
-          if [[ "$GITHUB_REF_NAME" == release-please--* ]]; then
-            echo code=false >> "$GITHUB_OUTPUT"
-          elif base=$(git merge-base origin/main HEAD) &&
-            git diff --quiet "$base" HEAD -- . ':!*.md' &&
-            git diff --quiet "$base" HEAD -- docs; then
-            echo code=false >> "$GITHUB_OUTPUT"
-          else
-            echo code=true >> "$GITHUB_OUTPUT"
-          fi
-
-  check:
-    name: Check
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.15
-      - run: go test -race ./...
-      - uses: hashicorp/setup-terraform@v3
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_wrapper: false
       - name: Check that the docs are generated from the schema
@@ -64,44 +53,63 @@ jobs:
           go generate ./...
           git diff --exit-code docs || (echo "::error::run go generate ./... and commit docs" && exit 1)
 
-  build:
-    name: Build
-    needs: check
+  govulncheck:
+    name: Vulnerabilities
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-go@v7
+      - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
         with:
           go-version-file: go.mod
-      - name: Build the release's archives and SHA256SUMS, unsigned and unpublished
-        uses: goreleaser/goreleaser-action@v7
+
+  workflows:
+    name: Workflows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          version: "~> v2"
-          args: release --snapshot --clean --skip=sign,publish
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+        with:
+          advanced-security: false
+
+  test:
+    name: Unit tests
+    needs: [lint, docs, govulncheck, workflows]
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'ci/validate-only') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./...
 
   # The provider is published on both registries: each CLI runs the
   # acceptance tests.
-  integration:
-    name: Integration
-    needs: build
+  acceptance:
+    name: Acceptance tests
+    needs: [lint, docs, govulncheck, workflows]
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'ci/validate-only') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         cli: [terraform, tofu]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - if: matrix.cli == 'terraform'
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_wrapper: false
       - if: matrix.cli == 'tofu'
-        uses: opentofu/setup-opentofu@v1
+        uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
         with:
           tofu_wrapper: false
       - if: matrix.cli == 'tofu'
@@ -111,18 +119,32 @@ jobs:
       - name: Deploy, import and destroy stacks on the runner's Docker, with ${{ matrix.cli }}
         run: make testacc
 
-  ci:
-    name: CI
-    needs: [changes, check, build, integration]
-    if: always()
+  binaries:
+    name: Binaries
+    needs: [test, acceptance]
     runs-on: ubuntu-latest
     steps:
-      - name: Every stage passed, or there was no code to check
-        env:
-          NEEDS: ${{ toJSON(needs) }}
-          CODE: ${{ needs.changes.outputs.code }}
-        run: |
-          echo "$NEEDS" | jq -e --arg code "$CODE" '
-            .changes.result == "success" and
-            ([.check.result, .build.result, .integration.result] | all(. == "success" or ($code == "false" and . == "skipped")))
-          ' > /dev/null || { echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build the release's archives and SHA256SUMS, unsigned and unpublished
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=sign,publish
+
+  ci:
+    name: CI
+    needs: [lint, docs, govulncheck, workflows, test, acceptance, binaries]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed, or was left out by ci/validate-only
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: exit 1
+      - run: echo "CI passed"

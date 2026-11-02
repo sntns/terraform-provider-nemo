@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/sntns/terraform-provider-nemo/compare/v0.2.0...v0.3.0) (2026-11-02)
+
+
+### Features
+
+* give an installation an override ([4edbaee](https://github.com/sntns/terraform-provider-nemo/commit/4edbaeecedd82ab814bd8568290b07c6c6b92e4a))
+
 ## [0.2.0](https://github.com/sntns/terraform-provider-nemo/compare/v0.1.0...v0.2.0) (2026-10-30)
 
 

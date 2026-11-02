@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"github.com/sntns/nemo/pkg/cnab"
 	"github.com/sntns/nemo/pkg/credentials"
 	"github.com/sntns/nemo/pkg/stack"
 	"github.com/sntns/nemo/pkg/storage"
@@ -55,6 +56,7 @@ func expandStack(ctx context.Context, model nemoStackResourceModel, diags *diag.
 			},
 			Parameters:  expandStrings(ctx, installation.Parameters, diags),
 			Credentials: expandCredentials(installation.Credentials, directory),
+			Override:    installation.Override.ValueString(),
 		})
 	}
 	return manifest
@@ -227,6 +229,7 @@ func flattenInstallation(installation storage.Installation) nemoStackInstallatio
 		Repository: types.StringNull(),
 		File:       types.StringNull(),
 		Parameters: types.MapNull(types.StringType),
+		Override:   optionalString(installation.Parameters[cnab.ParameterOverride]),
 	}
 	if file := installation.Bundle.File; file != "" {
 		model.File = types.StringValue(file)

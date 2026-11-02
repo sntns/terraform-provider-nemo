@@ -91,6 +91,13 @@ func TestAccNemoStack_basic(t *testing.T) {
 				),
 			},
 			{
+				Config: config("testAccNemoStack_override"),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("nemo_stack.test", "installations.0.override", "services:\n  web:\n    environment:\n      GREETING: hello\n"),
+					checkServiceEnvironment(name, "web", "GREETING=hello"),
+				),
+			},
+			{
 				ResourceName:      "nemo_stack.test",
 				ImportState:       true,
 				ImportStateVerify: true,
@@ -135,6 +142,35 @@ func checkNemoStackDeployed(name, installation, version string) resource.TestChe
 		for _, installed := range present {
 			if installed.Name == installation && deployedVersion(installed) != version {
 				return fmt.Errorf("stack %s: %s deployed at %s, expected %s", name, installation, deployedVersion(installed), version)
+			}
+		}
+		return nil
+	}
+}
+
+// checkServiceEnvironment checks that the containers of the stack's service
+// have the variable, as an override gives it.
+func checkServiceEnvironment(name, service, variable string) resource.TestCheckFunc {
+	return func(*terraform.State) error {
+		api, err := runtime.Connect(target.Target{})
+		if err != nil {
+			return err
+		}
+		defer api.Close()
+		containers, err := api.ContainerList(context.Background(), client.ContainerListOptions{Filters: client.Filters{}.Add("label", "com.docker.compose.project="+name, "com.docker.compose.service="+service)})
+		if err != nil {
+			return err
+		}
+		if len(containers.Items) == 0 {
+			return fmt.Errorf("stack %s: no container of %s", name, service)
+		}
+		for _, summary := range containers.Items {
+			inspected, err := api.ContainerInspect(context.Background(), summary.ID, client.ContainerInspectOptions{})
+			if err != nil {
+				return err
+			}
+			if !slices.Contains(inspected.Container.Config.Env, variable) {
+				return fmt.Errorf("stack %s: %s has not %s", name, service, variable)
 			}
 		}
 		return nil

@@ -109,6 +109,7 @@ type nemoStackInstallationModel struct {
 	File        types.String                    `tfsdk:"file"`
 	Parameters  types.Map                       `tfsdk:"parameters"`
 	Credentials map[string]nemoStackSourceModel `tfsdk:"credentials"`
+	Override    types.String                    `tfsdk:"override"`
 }
 
 // nemoStackSourceModel is where a credential, or a part of a TLS, is read:
@@ -201,6 +202,11 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 						Optional:            true,
 					},
 					"credentials": credentialsSchema("This installation's credentials, over the stack's."),
+					"override": schema.StringAttribute{
+						MarkdownDescription: "A compose document, as YAML, that nemo merges over the bundle's compose files: what this stack changes of the bundle, such as `file(\"proxy.override.yaml\")`. " +
+							"It can't change an image nor add a service. A secret or a config it adds reads its content from a credential of the stack, named after its variable in lowercase with dashes.",
+						Optional: true,
+					},
 				}},
 			},
 			"purge_on_destroy": schema.BoolAttribute{

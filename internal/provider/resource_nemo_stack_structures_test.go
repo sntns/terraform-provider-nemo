@@ -74,6 +74,7 @@ func TestExpandStack(t *testing.T) {
 	model := shop()
 	model.Installations = append(model.Installations, nemoStackInstallationModel{
 		Name: types.StringValue("worker"), Version: types.StringNull(), Repository: types.StringNull(), File: types.StringValue("bundles/worker/bundle.json"), Parameters: types.MapNull(types.StringType),
+		Override: types.StringValue("services: { worker: { environment: { LOG_LEVEL: debug } } }\n"),
 	})
 	manifest := expandStack(context.Background(), model, &diags)
 	require.False(t, diags.HasError(), diags)
@@ -91,6 +92,7 @@ func TestExpandStack(t *testing.T) {
 		{Name: "token", Source: valuesource.Source{Key: "env", Value: "TOKEN"}},
 	}, manifest.Credentials, "by name, the same manifest each time, its paths absolute as nemo's")
 	assert.Equal(t, filepath.Join(directory, "bundles/worker/bundle.json"), manifest.Installations[2].Bundle.File, "for nemo stack import from anywhere")
+	assert.Equal(t, "services: { worker: { environment: { LOG_LEVEL: debug } } }\n", manifest.Installations[2].Override, "the override, as written")
 	assert.Equal(t, storage.InstallationSpec{
 		Name: "web", Stack: "shop", Parameters: map[string]string{"port": "8080"},
 		Bundle: storage.BundleReference{Repository: "registry.example.com/web", Version: "2.0.0"},

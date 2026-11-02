@@ -140,6 +140,7 @@ Optional:
 
 - `credentials` (Attributes Map) This installation's credentials, over the stack's. Each is read where Terraform runs, from one source. (see [below for nested schema](#nestedatt--installations--credentials))
 - `file` (String) A `bundle.json`, instead of `remote` or `repository`: its content is followed by `content_hash`.
+- `override` (String) A compose document, as YAML, that nemo merges over the bundle's compose files: what this stack changes of the bundle, such as `file("proxy.override.yaml")`. It can't change an image nor add a service. A secret or a config it adds reads its content from a credential of the stack, named after its variable in lowercase with dashes.
 - `parameters` (Map of String) This installation's parameters, over the stack's.
 - `repository` (String) The bundle's repository in a registry, instead of `remote`: `ghcr.io/sntns/whoami`.
 - `version` (String) The bundle's version: with `remote`, or with `repository`. Reading the stack sets the version deployed.

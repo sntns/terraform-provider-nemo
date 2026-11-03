@@ -28,6 +28,8 @@ resource "nemo_stack" "shop" {
 
 The stack keeps the records of its installations on its target: from any machine that imported its `manifest` output, `nemo status`, `nemo logs` and `nemo installation runs` read it. nemo writes it only with `--force`, which the next apply undoes.
 
+A swarm to deploy on can itself come from Terraform: [`sntns/swarm`](https://github.com/sntns/terraform-provider-swarm) inits a cluster and keeps its nodes.
+
 ## Documentation
 
 On the [Terraform Registry](https://registry.terraform.io/providers/sntns/nemo/latest/docs) and the [OpenTofu Registry](https://search.opentofu.org/provider/sntns/nemo/latest):

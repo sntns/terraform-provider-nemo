@@ -25,7 +25,7 @@ The provider embeds nemo's library: deploying needs no nemo CLI, only building b
 |---|---|
 | Terraform | 1.0 or later; 1.11 or later for write-only credentials (`value_wo`) |
 | OpenTofu | 1.6 or later; 1.11 or later for write-only credentials (`value_wo`) |
-| Docker Engine on the target | any; in Swarm mode for `swarm`. nemo's installer brings Compose, the target needs no plugin |
+| Docker Engine on the target | any; in Swarm mode for `swarm`, a cluster [`sntns/swarm`](https://registry.terraform.io/providers/sntns/swarm) can init and manage. nemo's installer brings Compose, the target needs no plugin |
 
 The provider is published on the [Terraform Registry](https://registry.terraform.io/providers/sntns/nemo) and the [OpenTofu Registry](https://search.opentofu.org/provider/sntns/nemo), as `sntns/nemo` on both.
 

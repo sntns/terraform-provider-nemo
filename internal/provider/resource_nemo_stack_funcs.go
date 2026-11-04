@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cnabio/cnab-go/secrets/host"
+	"github.com/cnabio/cnab-go/valuesource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -179,55 +181,44 @@ func importIDOf(manifest stack.Stack) string {
 	return manifest.Name
 }
 
-// contentHash is the SHA-256 of the files' contents, in their order, none
-// without any: a path that changes shows on its own.
-func contentHash(files []string) (types.String, error) {
-	if len(files) == 0 {
-		return types.StringNull(), nil
+// contentHash is the SHA-256 of what the stack deploys and Terraform keeps
+// the source of only: its bundle files, in the installations' order, then
+// the values of its credentials given by a file, a variable or a command, as
+// the apply reads them. None without any. A credential that can't be read
+// counts as such: the apply tells why, when an action needs it.
+func contentHash(manifest stack.Stack) (types.String, error) {
+	sum, hashed := sha256.New(), false
+	add := func(data []byte, labels ...any) {
+		digest := sha256.Sum256(data)
+		fmt.Fprintln(sum, append(labels, hex.EncodeToString(digest[:]))...)
+		hashed = true
 	}
-	sum := sha256.New()
-	for _, file := range files {
-		data, err := os.ReadFile(file)
+	for _, installation := range manifest.Installations {
+		if installation.Bundle.File == "" {
+			continue
+		}
+		data, err := os.ReadFile(installation.Bundle.File)
 		if err != nil {
 			return types.StringNull(), err
 		}
-		digest := sha256.Sum256(data)
-		fmt.Fprintln(sum, hex.EncodeToString(digest[:]))
+		add(data)
+	}
+	credentials := func(scope string, strategies []valuesource.Strategy) {
+		for _, strategy := range strategies {
+			if strategy.Source.Key != host.SourceValue {
+				value, err := (&host.SecretStore{}).Resolve(strategy.Source.Key, strategy.Source.Value)
+				add([]byte(value), scope, strategy.Name, err == nil)
+			}
+		}
+	}
+	credentials("", manifest.Credentials)
+	for _, installation := range manifest.Installations {
+		credentials(installation.Name, installation.Credentials)
+	}
+	if !hashed {
+		return types.StringNull(), nil
 	}
 	return types.StringValue(hex.EncodeToString(sum.Sum(nil))), nil
-}
-
-// plannedFiles are the bundle files of the planned installations, when the
-// plan knows them all.
-func plannedFiles(installations types.List) ([]string, bool) {
-	if installations.IsUnknown() {
-		return nil, false
-	}
-	var files []string
-	for _, element := range installations.Elements() {
-		installation, ok := element.(types.Object)
-		if !ok || installation.IsUnknown() {
-			return nil, false
-		}
-		file, ok := installation.Attributes()["file"].(types.String)
-		if !ok || file.IsUnknown() {
-			return nil, false
-		}
-		if !file.IsNull() {
-			files = append(files, file.ValueString())
-		}
-	}
-	return files, true
-}
-
-func installationFiles(installations []nemoStackInstallationModel) []string {
-	var files []string
-	for _, installation := range installations {
-		if !installation.File.IsNull() {
-			files = append(files, installation.File.ValueString())
-		}
-	}
-	return files
 }
 
 // checkBundles loads the bundle of each installation the plan adds or takes

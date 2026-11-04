@@ -125,7 +125,7 @@ output "manifest" {
 
 ### Read-Only
 
-- `content_hash` (String) The SHA-256 of the installations' bundle files, in their order, computed at plan time: a bundle rebuilt at the same path changes it, and the next apply deploys it.
+- `content_hash` (String, Sensitive) The SHA-256 of the installations' bundle files, in their order, and of the values of the credentials given by `path`, `env` or `command`, computed at plan time: a bundle rebuilt at the same path, or a value changed behind the same source, changes it, and the next apply deploys it.
 - `id` (String) The stack's name.
 - `manifest` (String, Sensitive) The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, its status and its logs, from where it reaches the target. Its paths are absolute, from where Terraform runs, and its values, `value` or `value_wo`, are redacted, as nemo's records keep them: an action of nemo that needs one asks for it.
 

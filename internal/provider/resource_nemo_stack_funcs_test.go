@@ -7,12 +7,12 @@ import (
 	"testing"
 
 	"github.com/cnabio/cnab-go/valuesource"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sntns/nemo/pkg/stack"
 	"github.com/sntns/nemo/pkg/storage"
 	"github.com/sntns/nemo/pkg/target"
 )
@@ -84,48 +84,56 @@ func TestImportID(t *testing.T) {
 }
 
 func TestContentHash(t *testing.T) {
-	t.Parallel()
 	directory := t.TempDir()
-	api, web := filepath.Join(directory, "api.json"), filepath.Join(directory, "web.json")
+	api, web, token := filepath.Join(directory, "api.json"), filepath.Join(directory, "web.json"), filepath.Join(directory, "token")
 	require.NoError(t, os.WriteFile(api, []byte(`{"version":"1.0.0"}`), 0o600))
 	require.NoError(t, os.WriteFile(web, []byte(`{"version":"2.0.0"}`), 0o600))
-
-	first, err := contentHash([]string{api, web})
-	require.NoError(t, err)
-	again, err := contentHash([]string{api, web})
-	require.NoError(t, err)
-	assert.Equal(t, first, again)
-	reversed, err := contentHash([]string{web, api})
-	require.NoError(t, err)
-	assert.NotEqual(t, first, reversed, "in the installations' order")
-
-	require.NoError(t, os.WriteFile(api, []byte(`{"version":"1.0.1"}`), 0o600))
-	rebuilt, err := contentHash([]string{api, web})
-	require.NoError(t, err)
-	assert.NotEqual(t, first, rebuilt, "a bundle rebuilt at the same path")
-
-	none, err := contentHash(nil)
-	require.NoError(t, err)
-	assert.True(t, none.IsNull(), "a stack of registries only")
-	_, err = contentHash([]string{filepath.Join(directory, "missing.json")})
-	assert.Error(t, err)
-}
-
-func TestPlannedFiles(t *testing.T) {
-	t.Parallel()
-	attributes := map[string]attr.Type{"file": types.StringType}
-	object := func(file types.String) attr.Value {
-		return types.ObjectValueMust(attributes, map[string]attr.Value{"file": file})
+	require.NoError(t, os.WriteFile(token, []byte("t0ken"), 0o600))
+	t.Setenv("TF_NEMO_TEST_KEY", "k3y")
+	bundles := func(files ...string) stack.Stack {
+		var manifest stack.Stack
+		for _, file := range files {
+			manifest.Installations = append(manifest.Installations, storage.InstallationSpec{Name: filepath.Base(file), Bundle: storage.BundleReference{File: file}})
+		}
+		return manifest
 	}
-	planned := types.ListValueMust(types.ObjectType{AttrTypes: attributes}, []attr.Value{object(types.StringValue("api.json")), object(types.StringNull())})
-	files, known := plannedFiles(planned)
-	assert.True(t, known)
-	assert.Equal(t, []string{"api.json"}, files)
+	source := func(key, value string) []valuesource.Strategy {
+		return []valuesource.Strategy{{Name: "api-key", Source: valuesource.Source{Key: key, Value: value}}}
+	}
+	hash := func(manifest stack.Stack) types.String {
+		t.Helper()
+		hash, err := contentHash(manifest)
+		require.NoError(t, err)
+		return hash
+	}
 
-	_, known = plannedFiles(types.ListValueMust(types.ObjectType{AttrTypes: attributes}, []attr.Value{object(types.StringUnknown())}))
-	assert.False(t, known, "a file another resource gives: the hash is known after apply")
-	_, known = plannedFiles(types.ListUnknown(types.ObjectType{AttrTypes: attributes}))
-	assert.False(t, known)
+	first := hash(bundles(api, web))
+	assert.Equal(t, first, hash(bundles(api, web)))
+	assert.NotEqual(t, first, hash(bundles(web, api)), "in the installations' order")
+	require.NoError(t, os.WriteFile(api, []byte(`{"version":"1.0.1"}`), 0o600))
+	assert.NotEqual(t, first, hash(bundles(api, web)), "a bundle rebuilt at the same path")
+	_, err := contentHash(bundles(filepath.Join(directory, "missing.json")))
+	assert.Error(t, err)
+
+	given := bundles(api)
+	given.Credentials = source("env", "TF_NEMO_TEST_KEY")
+	given.Installations[0].Credentials = source("path", token)
+	before := hash(given)
+	assert.NotEqual(t, hash(bundles(api)), before)
+	t.Setenv("TF_NEMO_TEST_KEY", "n3w")
+	rotated := hash(given)
+	assert.NotEqual(t, before, rotated, "a key rotated behind the same variable")
+	require.NoError(t, os.WriteFile(token, []byte("n3w"), 0o600))
+	assert.NotEqual(t, rotated, hash(given), "a file rewritten at the same path")
+
+	unset := stack.Stack{Credentials: source("env", "TF_NEMO_TEST_UNSET")}
+	missing := hash(unset)
+	assert.False(t, missing.IsNull(), "a source that can't be read is left to the apply")
+	t.Setenv("TF_NEMO_TEST_UNSET", "")
+	assert.NotEqual(t, missing, hash(unset), "set, even empty")
+
+	assert.True(t, hash(stack.Stack{Credentials: source("value", "k3y")}).IsNull(), "a value the state compares itself")
+	assert.True(t, hash(stack.Stack{}).IsNull(), "a stack of registries only")
 }
 
 // The manifest output shows no value, as nemo's records keep none.

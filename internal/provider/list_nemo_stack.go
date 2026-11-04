@@ -162,12 +162,13 @@ func (r *nemoStackListResource) listed(ctx context.Context, req list.ListRequest
 		return result, true
 	}
 
-	hash, err := contentHash(installationFiles(model.Installations))
+	manifest := expandStack(ctx, r.connection.over(model), &result.Diagnostics)
+	hash, err := contentHash(manifest)
 	if err != nil {
 		result.Diagnostics.AddError("nemo stack read failed", err.Error())
 	}
 	model.ContentHash = hash
-	model.Manifest = encodeManifest(expandStack(ctx, r.connection.over(model), &result.Diagnostics), &result.Diagnostics)
+	model.Manifest = encodeManifest(manifest, &result.Diagnostics)
 	// Attribute by attribute: those left out, such as timeouts, stay null.
 	for name, value := range map[string]any{
 		"id": model.ID, "name": model.Name, "target": model.Target, "installer": model.Installer, "installations": model.Installations,

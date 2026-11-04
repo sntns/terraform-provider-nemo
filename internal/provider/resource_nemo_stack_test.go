@@ -1,9 +1,11 @@
 package provider
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -151,13 +153,53 @@ func checkNemoStackDeployed(name, installation, version string) resource.TestChe
 // checkServiceEnvironment checks that the containers of the stack's service
 // have the variable, as an override gives it.
 func checkServiceEnvironment(name, service, variable string) resource.TestCheckFunc {
+	return checkServiceContainers(name, service, func(ctx context.Context, api client.APIClient, id string) error {
+		inspected, err := api.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(inspected.Container.Config.Env, variable) {
+			return fmt.Errorf("stack %s: %s has not %s", name, service, variable)
+		}
+		return nil
+	})
+}
+
+// checkServiceFile checks that the containers of the stack's service have
+// the file with this content, as a secret of an override gives it.
+func checkServiceFile(name, service, file, content string) resource.TestCheckFunc {
+	return checkServiceContainers(name, service, func(ctx context.Context, api client.APIClient, id string) error {
+		copied, err := api.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: file})
+		if err != nil {
+			return err
+		}
+		defer copied.Content.Close()
+		archive := tar.NewReader(copied.Content)
+		if _, err := archive.Next(); err != nil {
+			return err
+		}
+		data, err := io.ReadAll(archive)
+		if err != nil {
+			return err
+		}
+		if string(data) != content {
+			return fmt.Errorf("stack %s: %s has %q in %s, not %q", name, service, data, file, content)
+		}
+		return nil
+	})
+}
+
+// checkServiceContainers runs the check on each container of the stack's
+// service, of which there must be one at least.
+func checkServiceContainers(name, service string, check func(context.Context, client.APIClient, string) error) resource.TestCheckFunc {
 	return func(*terraform.State) error {
+		ctx := context.Background()
 		api, err := runtime.Connect(target.Target{})
 		if err != nil {
 			return err
 		}
 		defer api.Close()
-		containers, err := api.ContainerList(context.Background(), client.ContainerListOptions{Filters: client.Filters{}.Add("label", "com.docker.compose.project="+name, "com.docker.compose.service="+service)})
+		containers, err := api.ContainerList(ctx, client.ContainerListOptions{Filters: client.Filters{}.Add("label", "com.docker.compose.project="+name, "com.docker.compose.service="+service)})
 		if err != nil {
 			return err
 		}
@@ -165,12 +207,8 @@ func checkServiceEnvironment(name, service, variable string) resource.TestCheckF
 			return fmt.Errorf("stack %s: no container of %s", name, service)
 		}
 		for _, summary := range containers.Items {
-			inspected, err := api.ContainerInspect(context.Background(), summary.ID, client.ContainerInspectOptions{})
-			if err != nil {
+			if err := check(ctx, api, summary.ID); err != nil {
 				return err
-			}
-			if !slices.Contains(inspected.Container.Config.Env, variable) {
-				return fmt.Errorf("stack %s: %s has not %s", name, service, variable)
 			}
 		}
 		return nil
@@ -192,6 +230,50 @@ func checkNemoStackDestroyed(name string) resource.TestCheckFunc {
 		_, err = api.VolumeRemove(context.Background(), volume.Name(name), client.VolumeRemoveOptions{})
 		return err
 	}
+}
+
+// A credential's value changed behind the same source plans an update, which
+// gives the service the new value; one that changes at each read, too.
+func TestAccNemoStack_credentials(t *testing.T) {
+	name := "tf-acc-credentials"
+	bundle, err := filepath.Abs(filepath.Join("..", "..", "testdata", "bundles", "hello", "bundle.json"))
+	require.NoError(t, err)
+	config := func(source string) string {
+		return fmt.Sprintf(loadTestConfiguration(t, "nemo_stack", "testAccNemoStack_credentials"), name, bundle, source)
+	}
+	variable, minted := `env = "TF_ACC_NEMO_GREETING"`, `command = "od -An -N8 -tx8 /dev/urandom"`
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             checkNemoStackDestroyed(name),
+		Steps: []resource.TestStep{
+			{
+				PreConfig: func() { t.Setenv("TF_ACC_NEMO_GREETING", "hello") },
+				Config:    config(variable),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttrSet("nemo_stack.test", "content_hash"),
+					checkServiceFile(name, "web", "/run/secrets/greeting", "hello"),
+				),
+			},
+			{
+				PreConfig: func() { t.Setenv("TF_ACC_NEMO_GREETING", "bonjour") },
+				Config:    config(variable),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("nemo_stack.test", plancheck.ResourceActionUpdate)},
+				},
+				Check: checkServiceFile(name, "web", "/run/secrets/greeting", "bonjour"),
+			},
+			{Config: config(minted), ExpectNonEmptyPlan: true},
+			{
+				Config: config(minted),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("nemo_stack.test", plancheck.ResourceActionUpdate)},
+				},
+				ExpectNonEmptyPlan: true,
+			},
+		},
+	})
 }
 
 // A bundle that is not the installation's, or not there, fails the plan,

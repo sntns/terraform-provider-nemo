@@ -223,9 +223,10 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 				DeleteDescription: "How long destroying the stack may take. Default: as long as nemo's actions take.",
 			}),
 			"content_hash": schema.StringAttribute{
-				MarkdownDescription: "The SHA-256 of the installations' bundle files, in their order, computed at plan time: " +
-					"a bundle rebuilt at the same path changes it, and the next apply deploys it.",
-				Computed: true,
+				MarkdownDescription: "The SHA-256 of the installations' bundle files, in their order, and of the values of the credentials given by `path`, `env` or `command`, computed at plan time: " +
+					"a bundle rebuilt at the same path, or a value changed behind the same source, changes it, and the next apply deploys it.",
+				Computed:  true,
+				Sensitive: true,
 			},
 			"manifest": schema.StringAttribute{
 				MarkdownDescription: "The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, " +
@@ -432,6 +433,13 @@ func (r *nemoStackResource) Create(ctx context.Context, req resource.CreateReque
 
 	plan.ID = types.StringValue(manifest.Name)
 	plan.Manifest = encodeManifest(manifest, &resp.Diagnostics)
+	if plan.ContentHash.IsUnknown() {
+		var err error
+		if plan.ContentHash, err = contentHash(manifest); err != nil {
+			resp.Diagnostics.AddError("nemo stack create failed", err.Error())
+			return
+		}
+	}
 	if err := up(ctx, manifest, plan.PurgeOnDestroy.ValueBool()); err != nil {
 		resp.Diagnostics.AddError("nemo stack create failed", err.Error())
 	}
@@ -464,17 +472,20 @@ func (r *nemoStackResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
+	imported := state.Installations == nil
 	refreshInstallations(ctx, &state, present, &resp.Diagnostics)
-	// An imported stack: its bundles' files as they are now.
-	if state.ContentHash.IsNull() {
-		hash, err := contentHash(installationFiles(state.Installations))
+	manifest = expandStack(ctx, r.connection.over(state), &resp.Diagnostics)
+	// An imported stack: its bundles' files as they are now. Any other keeps
+	// the hash it was applied with, for the plan to compare.
+	if imported {
+		hash, err := contentHash(manifest)
 		if err != nil {
 			resp.Diagnostics.AddError("nemo stack read failed", err.Error())
 			return
 		}
 		state.ContentHash = hash
 	}
-	state.Manifest = encodeManifest(expandStack(ctx, r.connection.over(state), &resp.Diagnostics), &resp.Diagnostics)
+	state.Manifest = encodeManifest(manifest, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 	setIdentity(ctx, resp.Identity, state, &resp.Diagnostics)
 }
@@ -497,6 +508,13 @@ func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateReque
 
 	plan.ID = types.StringValue(manifest.Name)
 	plan.Manifest = encodeManifest(manifest, &resp.Diagnostics)
+	if plan.ContentHash.IsUnknown() {
+		var err error
+		if plan.ContentHash, err = contentHash(manifest); err != nil {
+			resp.Diagnostics.AddError("nemo stack update failed", err.Error())
+			return
+		}
+	}
 	if err := up(ctx, manifest, plan.PurgeOnDestroy.ValueBool()); err != nil {
 		resp.Diagnostics.AddError("nemo stack update failed", err.Error())
 		return
@@ -505,30 +523,15 @@ func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateReque
 	setIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
 }
 
-// ModifyPlan computes content_hash from the bundle files the plan gives, so
-// that a bundle rebuilt at the same path changes the plan, and loads the
-// bundles the plan installs anew, so that one that is not there fails the
-// plan rather than the apply.
+// ModifyPlan computes content_hash from the bundle files and the credentials
+// the plan gives, so that a bundle rebuilt at the same path, or a value
+// changed behind its source, changes the plan, and loads the bundles the
+// plan installs anew, so that one that is not there fails the plan rather
+// than the apply.
 func (r *nemoStackResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if req.Plan.Raw.IsNull() {
 		return
 	}
-
-	var installations types.List
-	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("installations"), &installations)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	hash := types.StringUnknown()
-	if files, known := plannedFiles(installations); known {
-		var err error
-		if hash, err = contentHash(files); err != nil {
-			resp.Diagnostics.AddAttributeError(path.Root("installations"), "nemo stack bundle unreadable", err.Error())
-			return
-		}
-	}
-	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), hash)...)
 
 	// A plan with values an apply computes is checked by that apply.
 	var planned, current nemoStackResourceModel
@@ -536,7 +539,22 @@ func (r *nemoStackResource) ModifyPlan(ctx context.Context, req resource.ModifyP
 		return
 	}
 	var ignored diag.Diagnostics
-	checkBundles(ctx, planned, expandStack(ctx, r.connection.over(planned), &ignored), expandStack(ctx, r.connection.over(current), &ignored), &resp.Diagnostics)
+	manifest := expandStack(ctx, r.connection.over(planned), &ignored)
+
+	// A hash that changed is known after apply: Terraform plans again when it applies, and a value read anew may differ again.
+	hash := types.StringUnknown()
+	if req.Config.Raw.IsFullyKnown() {
+		computed, err := contentHash(manifest)
+		if err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("installations"), "nemo stack bundle unreadable", err.Error())
+			return
+		}
+		if computed.Equal(current.ContentHash) {
+			hash = computed
+		}
+	}
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), hash)...)
+	checkBundles(ctx, planned, manifest, expandStack(ctx, r.connection.over(current), &ignored), &resp.Diagnostics)
 }
 
 func (r *nemoStackResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

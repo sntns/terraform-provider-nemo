@@ -37,18 +37,19 @@ type nemoStackResource struct {
 }
 
 type nemoStackResourceModel struct {
-	ID             types.String                    `tfsdk:"id"`
-	Name           types.String                    `tfsdk:"name"`
-	Target         *nemoStackTargetModel           `tfsdk:"target"`
-	Installer      *nemoStackInstallerModel        `tfsdk:"installer"`
-	Remote         types.String                    `tfsdk:"remote"`
-	Parameters     types.Map                       `tfsdk:"parameters"`
-	Credentials    map[string]nemoStackSourceModel `tfsdk:"credentials"`
-	Installations  []nemoStackInstallationModel    `tfsdk:"installations"`
-	PurgeOnDestroy types.Bool                      `tfsdk:"purge_on_destroy"`
-	Timeouts       timeouts.Value                  `tfsdk:"timeouts"`
-	ContentHash    types.String                    `tfsdk:"content_hash"`
-	Manifest       types.String                    `tfsdk:"manifest"`
+	ID              types.String                    `tfsdk:"id"`
+	Name            types.String                    `tfsdk:"name"`
+	Target          *nemoStackTargetModel           `tfsdk:"target"`
+	Installer       *nemoStackInstallerModel        `tfsdk:"installer"`
+	Remote          types.String                    `tfsdk:"remote"`
+	Parameters      types.Map                       `tfsdk:"parameters"`
+	Credentials     map[string]nemoStackSourceModel `tfsdk:"credentials"`
+	Installations   []nemoStackInstallationModel    `tfsdk:"installations"`
+	PurgeOnDestroy  types.Bool                      `tfsdk:"purge_on_destroy"`
+	Timeouts        timeouts.Value                  `tfsdk:"timeouts"`
+	ContentHash     types.String                    `tfsdk:"content_hash"`
+	CredentialsHash types.String                    `tfsdk:"credentials_hash"`
+	Manifest        types.String                    `tfsdk:"manifest"`
 }
 
 type nemoStackTargetModel struct {
@@ -226,6 +227,12 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 				MarkdownDescription: "The SHA-256 of the installations' bundle files, in their order, computed at plan time: " +
 					"a bundle rebuilt at the same path changes it, and the next apply deploys it.",
 				Computed: true,
+			},
+			"credentials_hash": schema.StringAttribute{
+				MarkdownDescription: "The SHA-256 of the values of the credentials given by `path`, `env` or `command`, read at plan time where Terraform runs: " +
+					"a value that changes behind the same source, a rotated key, changes it, and the next apply deploys it.",
+				Computed:  true,
+				Sensitive: true,
 			},
 			"manifest": schema.StringAttribute{
 				MarkdownDescription: "The stack's manifest, in YAML, for `nemo stack import`: nemo then reads the stack, " +
@@ -432,6 +439,9 @@ func (r *nemoStackResource) Create(ctx context.Context, req resource.CreateReque
 
 	plan.ID = types.StringValue(manifest.Name)
 	plan.Manifest = encodeManifest(manifest, &resp.Diagnostics)
+	if plan.CredentialsHash.IsUnknown() {
+		plan.CredentialsHash = credentialsHash(manifest)
+	}
 	if err := up(ctx, manifest, plan.PurgeOnDestroy.ValueBool()); err != nil {
 		resp.Diagnostics.AddError("nemo stack create failed", err.Error())
 	}
@@ -497,6 +507,9 @@ func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateReque
 
 	plan.ID = types.StringValue(manifest.Name)
 	plan.Manifest = encodeManifest(manifest, &resp.Diagnostics)
+	if plan.CredentialsHash.IsUnknown() {
+		plan.CredentialsHash = credentialsHash(manifest)
+	}
 	if err := up(ctx, manifest, plan.PurgeOnDestroy.ValueBool()); err != nil {
 		resp.Diagnostics.AddError("nemo stack update failed", err.Error())
 		return
@@ -506,9 +519,10 @@ func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateReque
 }
 
 // ModifyPlan computes content_hash from the bundle files the plan gives, so
-// that a bundle rebuilt at the same path changes the plan, and loads the
-// bundles the plan installs anew, so that one that is not there fails the
-// plan rather than the apply.
+// that a bundle rebuilt at the same path changes the plan, and
+// credentials_hash from the credentials' sources, so that a value changed
+// behind its source does too. It loads the bundles the plan installs anew,
+// so that one that is not there fails the plan rather than the apply.
 func (r *nemoStackResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if req.Plan.Raw.IsNull() {
 		return
@@ -536,7 +550,16 @@ func (r *nemoStackResource) ModifyPlan(ctx context.Context, req resource.ModifyP
 		return
 	}
 	var ignored diag.Diagnostics
-	checkBundles(ctx, planned, expandStack(ctx, r.connection.over(planned), &ignored), expandStack(ctx, r.connection.over(current), &ignored), &resp.Diagnostics)
+	manifest := expandStack(ctx, r.connection.over(planned), &ignored)
+	// A changed hash is known after apply: Terraform plans again when it applies, and a value read anew may differ again.
+	credentials := types.StringUnknown()
+	if req.Config.Raw.IsFullyKnown() {
+		if hash := credentialsHash(manifest); hash.Equal(current.CredentialsHash) {
+			credentials = hash
+		}
+	}
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("credentials_hash"), credentials)...)
+	checkBundles(ctx, planned, manifest, expandStack(ctx, r.connection.over(current), &ignored), &resp.Diagnostics)
 }
 
 func (r *nemoStackResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

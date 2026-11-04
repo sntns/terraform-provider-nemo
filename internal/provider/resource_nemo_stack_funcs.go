@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cnabio/cnab-go/secrets/host"
+	"github.com/cnabio/cnab-go/valuesource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -195,6 +197,34 @@ func contentHash(files []string) (types.String, error) {
 		fmt.Fprintln(sum, hex.EncodeToString(digest[:]))
 	}
 	return types.StringValue(hex.EncodeToString(sum.Sum(nil))), nil
+}
+
+// credentialsHash is the SHA-256 of the values of the stack's credentials
+// given by a file, a variable or a command, read as the apply reads them,
+// none without any: Terraform keeps their sources alone. A `value` is left
+// out, Terraform compares it itself. A source that can't be read counts as
+// such: the apply tells why, when an action needs it.
+func credentialsHash(manifest stack.Stack) types.String {
+	sum, read := sha256.New(), false
+	add := func(scope string, strategies []valuesource.Strategy) {
+		for _, strategy := range strategies {
+			if strategy.Source.Key == host.SourceValue {
+				continue
+			}
+			value, err := (&host.SecretStore{}).Resolve(strategy.Source.Key, strategy.Source.Value)
+			digest := sha256.Sum256([]byte(value))
+			fmt.Fprintln(sum, scope, strategy.Name, hex.EncodeToString(digest[:]), err == nil)
+			read = true
+		}
+	}
+	add("", manifest.Credentials)
+	for _, installation := range manifest.Installations {
+		add(installation.Name, installation.Credentials)
+	}
+	if !read {
+		return types.StringNull()
+	}
+	return types.StringValue(hex.EncodeToString(sum.Sum(nil)))
 }
 
 // plannedFiles are the bundle files of the planned installations, when the

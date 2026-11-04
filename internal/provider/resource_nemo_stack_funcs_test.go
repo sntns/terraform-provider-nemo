@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/sntns/nemo/pkg/stack"
 	"github.com/sntns/nemo/pkg/storage"
 	"github.com/sntns/nemo/pkg/target"
 )
@@ -109,6 +110,41 @@ func TestContentHash(t *testing.T) {
 	assert.True(t, none.IsNull(), "a stack of registries only")
 	_, err = contentHash([]string{filepath.Join(directory, "missing.json")})
 	assert.Error(t, err)
+}
+
+func TestCredentialsHash(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "token")
+	require.NoError(t, os.WriteFile(file, []byte("t0ken"), 0o600))
+	t.Setenv("TF_NEMO_TEST_KEY", "k3y")
+	source := func(key, value string) []valuesource.Strategy {
+		return []valuesource.Strategy{{Name: "api-key", Source: valuesource.Source{Key: key, Value: value}}}
+	}
+	manifest := stack.Stack{
+		Credentials:   source("env", "TF_NEMO_TEST_KEY"),
+		Installations: []storage.InstallationSpec{{Name: "api", Credentials: source("path", file)}},
+	}
+
+	first := credentialsHash(manifest)
+	assert.False(t, first.IsNull())
+	assert.Equal(t, first, credentialsHash(manifest))
+
+	t.Setenv("TF_NEMO_TEST_KEY", "n3w")
+	rotated := credentialsHash(manifest)
+	assert.NotEqual(t, first, rotated, "a key rotated behind the same variable")
+	require.NoError(t, os.WriteFile(file, []byte("n3w"), 0o600))
+	assert.NotEqual(t, rotated, credentialsHash(manifest), "a file rewritten at the same path")
+
+	moved := stack.Stack{Installations: []storage.InstallationSpec{{Name: "api", Credentials: source("env", "TF_NEMO_TEST_KEY")}, {Name: "web", Credentials: source("path", file)}}}
+	assert.NotEqual(t, credentialsHash(manifest), credentialsHash(moved), "the same values given to other installations")
+
+	unset := stack.Stack{Credentials: source("env", "TF_NEMO_TEST_UNSET")}
+	missing := credentialsHash(unset)
+	assert.False(t, missing.IsNull(), "a source that can't be read is left to the apply")
+	t.Setenv("TF_NEMO_TEST_UNSET", "")
+	assert.NotEqual(t, missing, credentialsHash(unset), "set, even empty")
+
+	assert.True(t, credentialsHash(stack.Stack{Credentials: source("value", "k3y")}).IsNull(), "a value the state compares itself")
+	assert.True(t, credentialsHash(stack.Stack{}).IsNull())
 }
 
 func TestPlannedFiles(t *testing.T) {

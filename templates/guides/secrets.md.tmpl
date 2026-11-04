@@ -44,24 +44,9 @@ Each credential has one source:
 | `value` | the configuration | the value, as a sensitive attribute |
 | `value_wo` | the configuration, write-only | nothing |
 
-`path`, `env` and `command` keep the secret out of Terraform: it is read at each plan and each action, on the machine that runs them, and the state keeps only a hash of it, `credentials_hash`. Prefer them when the secret is there already, in a file a CI job mounts, or behind a command of your secret manager.
+`path`, `env` and `command` keep the secret out of Terraform: it is read at each plan and each action, on the machine that runs them, and the state keeps only a hash of it, in `content_hash`. A value changed behind the same source, a key rotated in the same variable, changes that hash: the next plan shows an update of the stack, and the apply deploys the new value. A command whose output changes at every run, a token minted at each call, plans an update every time. Prefer them when the secret is there already, in a file a CI job mounts, or behind a command of your secret manager.
 
 `value` is the simplest, from a variable or another resource's attribute, but the state then keeps the secret: keep the state encrypted.
-
-## When a value changes
-
-A value changed behind the same source, a key rotated in the variable `env` names, changes the stack's `credentials_hash`: the next plan shows an update of the stack, and the apply upgrades its installations with the new value. The services that read it are updated: on a swarm, nemo creates a new secret, named after its content's hash, and removes the old one.
-
-```text
-  # nemo_stack.shop will be updated in-place
-  ~ resource "nemo_stack" "shop" {
-      ~ credentials_hash = (sensitive value)
-    }
-```
-
-So the plan reads every `path`, `env` and `command` credential: a command runs at each plan, and one whose output changes at every run, such as a token minted at each call, plans an update every time. A source the plan can't read, a variable that isn't set, is left to the apply, which fails if an action needs it.
-
-A stack applied by a provider older than `credentials_hash` has none in its state: its first plan shows an update, which deploys the values as they are then.
 
 ## Write-only values
 

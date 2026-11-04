@@ -252,7 +252,7 @@ func TestAccNemoStack_credentials(t *testing.T) {
 				PreConfig: func() { t.Setenv("TF_ACC_NEMO_GREETING", "hello") },
 				Config:    config(variable),
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttrSet("nemo_stack.test", "credentials_hash"),
+					resource.TestCheckResourceAttrSet("nemo_stack.test", "content_hash"),
 					checkServiceFile(name, "web", "/run/secrets/greeting", "hello"),
 				),
 			},

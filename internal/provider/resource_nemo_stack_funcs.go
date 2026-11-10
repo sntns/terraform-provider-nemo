@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -101,6 +102,10 @@ func refreshInstallations(ctx context.Context, model *nemoStackResourceModel, pr
 	}
 	var installations []nemoStackInstallationModel
 	for _, known := range model.Installations {
+		if known.External != nil {
+			installations = append(installations, known)
+			continue
+		}
 		installation, ok := byName[known.Name.ValueString()]
 		if !ok {
 			continue
@@ -127,6 +132,13 @@ func encodeManifest(manifest stack.Stack, diags *diag.Diagnostics) types.String 
 	manifest.Installations = slices.Clone(manifest.Installations)
 	for i, installation := range manifest.Installations {
 		manifest.Installations[i].Credentials = credentials.Recorded(installation.Credentials)
+		if external := installation.External; external != nil {
+			outputs := map[string]valuesource.Source{}
+			for name, source := range external.Outputs {
+				outputs[name] = *credentials.RecordedSource(&source)
+			}
+			manifest.Installations[i].External = &storage.External{Outputs: outputs}
+		}
 	}
 	if tls := manifest.Target.TLS; tls != nil {
 		manifest.Target.TLS = &target.TLS{CA: credentials.RecordedSource(tls.CA), Cert: credentials.RecordedSource(tls.Cert), Key: credentials.RecordedSource(tls.Key)}
@@ -214,6 +226,11 @@ func contentHash(manifest stack.Stack) (types.String, error) {
 	credentials("", manifest.Credentials)
 	for _, installation := range manifest.Installations {
 		credentials(installation.Name, installation.Credentials)
+		if installation.External != nil {
+			for _, name := range slices.Sorted(maps.Keys(installation.External.Outputs)) {
+				credentials(installation.Name+" output", []valuesource.Strategy{{Name: name, Source: installation.External.Outputs[name]}})
+			}
+		}
 	}
 	if !hashed {
 		return types.StringNull(), nil
@@ -238,7 +255,7 @@ func checkBundles(ctx context.Context, model nemoStackResourceModel, planned, cu
 	}
 	for i, installation := range planned.Installations {
 		given := model.Installations[i]
-		if given.Version.IsUnknown() || given.Repository.IsUnknown() || given.File.IsUnknown() {
+		if installation.External != nil || given.Version.IsUnknown() || given.Repository.IsUnknown() || given.File.IsUnknown() {
 			continue
 		}
 		at := path.Root("installations").AtListIndex(i)

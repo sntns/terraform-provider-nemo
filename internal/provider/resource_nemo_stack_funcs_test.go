@@ -149,3 +149,41 @@ func TestEncodeManifest_redactsTheValues(t *testing.T) {
 	assert.Contains(t, encoded.ValueString(), "env: CERT", "the other sources as they are")
 	assert.Equal(t, "key", manifest.Target.TLS.Key.Value, "the manifest nemo deploys keeps its values")
 }
+
+// An external installation is provided outside the stack: the records never have it, the state keeps it, and the manifest
+// gives its outputs, their values redacted where it is kept, followed by content_hash.
+func TestExternalInstallation(t *testing.T) {
+	t.Setenv("MANAGED_DATABASE_URI", "postgres://managed:5432/app")
+	ctx := context.Background()
+	var diags diag.Diagnostics
+	model := shop()
+	model.Installations = append(model.Installations, nemoStackInstallationModel{
+		Name: types.StringValue("database"), Version: types.StringNull(), Repository: types.StringNull(), File: types.StringNull(), Parameters: types.MapNull(types.StringType),
+		External: &nemoStackExternalModel{Outputs: map[string]nemoStackSourceModel{"uri": *source("env", "MANAGED_DATABASE_URI"), "host": *source("value", "db.example.com")}},
+	})
+
+	manifest := expandStack(ctx, model, &diags)
+	require.False(t, diags.HasError(), diags)
+	require.NoError(t, manifest.Validate())
+	database := manifest.Installations[2]
+	require.NotNil(t, database.External)
+	assert.Equal(t, valuesource.Source{Key: "env", Value: "MANAGED_DATABASE_URI"}, database.External.Outputs["uri"])
+	assert.Equal(t, valuesource.Source{Key: "value", Value: "db.example.com"}, database.External.Outputs["host"])
+
+	encoded := encodeManifest(manifest, &diags)
+	assert.NotContains(t, encoded.ValueString(), "db.example.com", "a value redacted")
+	assert.Contains(t, encoded.ValueString(), "env: MANAGED_DATABASE_URI")
+
+	before, err := contentHash(manifest)
+	require.NoError(t, err)
+	t.Setenv("MANAGED_DATABASE_URI", "postgres://elsewhere:5432/app")
+	after, err := contentHash(manifest)
+	require.NoError(t, err)
+	assert.NotEqual(t, before, after, "an output's value followed")
+
+	refreshInstallations(ctx, &model, []storage.Installation{installation("api", "1.2.0"), installation("web", "2.0.0")}, &diags)
+	require.False(t, diags.HasError(), diags)
+	require.Len(t, model.Installations, 3)
+	assert.Equal(t, "database", model.Installations[2].Name.ValueString(), "kept, though never recorded")
+	assert.NotNil(t, model.Installations[2].External)
+}

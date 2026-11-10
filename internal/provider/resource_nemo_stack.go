@@ -110,6 +110,13 @@ type nemoStackInstallationModel struct {
 	Parameters  types.Map                       `tfsdk:"parameters"`
 	Credentials map[string]nemoStackSourceModel `tfsdk:"credentials"`
 	Override    types.String                    `tfsdk:"override"`
+	External    *nemoStackExternalModel         `tfsdk:"external"`
+}
+
+// nemoStackExternalModel is an installation provided outside the stack, by
+// the outputs it gives.
+type nemoStackExternalModel struct {
+	Outputs map[string]nemoStackSourceModel `tfsdk:"outputs"`
 }
 
 // nemoStackSourceModel is where a credential, or a part of a TLS, is read:
@@ -206,6 +213,22 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 						MarkdownDescription: "A compose document, as YAML, that nemo merges over the bundle's compose files: what this stack changes of the bundle, such as `file(\"proxy.override.yaml\")`. " +
 							"It can't change an image nor add a service. A secret or a config it adds reads its content from a credential of the stack, named after its variable in lowercase with dashes.",
 						Optional: true,
+					},
+					"external": schema.SingleNestedAttribute{
+						MarkdownDescription: "Makes the installation one provided outside the stack, such as a managed database instead of the bundle the others require: nemo deploys nothing for it, " +
+							"and gives the bundles that require it the outputs given here. It then has no `version`, `repository`, `file`, `parameters`, `credentials` or `override`. " +
+							"One the stack installed before is uninstalled at the next apply.",
+						Optional: true,
+						Attributes: map[string]schema.Attribute{
+							"outputs": schema.MapNestedAttribute{
+								MarkdownDescription: "The outputs it gives, by name, each read where Terraform runs, from one source, as a credential is.",
+								Optional:            true,
+								NestedObject: schema.NestedAttributeObject{
+									Attributes: sourceAttributes(true),
+									Validators: []validator.Object{oneSource{}},
+								},
+							},
+						},
 					},
 				}},
 			},

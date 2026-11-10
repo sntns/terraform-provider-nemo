@@ -13,7 +13,7 @@ require (
 	github.com/hashicorp/terraform-plugin-log v0.11.0
 	github.com/hashicorp/terraform-plugin-testing v1.16.0
 	github.com/moby/moby/client v0.6.2
-	github.com/sntns/nemo v0.13.0
+	github.com/sntns/nemo v0.14.0
 	github.com/stretchr/testify v1.12.1
 )
 

@@ -139,6 +139,7 @@ Required:
 Optional:
 
 - `credentials` (Attributes Map) This installation's credentials, over the stack's. Each is read where Terraform runs, from one source. (see [below for nested schema](#nestedatt--installations--credentials))
+- `external` (Attributes) Makes the installation one provided outside the stack, such as a managed database instead of the bundle the others require: nemo deploys nothing for it, and gives the bundles that require it the outputs given here. It then has no `version`, `repository`, `file`, `parameters`, `credentials` or `override`. One the stack installed before is uninstalled at the next apply. (see [below for nested schema](#nestedatt--installations--external))
 - `file` (String) A `bundle.json`, instead of `remote` or `repository`: its content is followed by `content_hash`.
 - `override` (String) A compose document, as YAML, that nemo merges over the bundle's compose files: what this stack changes of the bundle, such as `file("proxy.override.yaml")`. It can't change an image nor add a service. A secret or a config it adds reads its content from a credential of the stack, named after its variable in lowercase with dashes.
 - `parameters` (Map of String) This installation's parameters, over the stack's.
@@ -156,6 +157,27 @@ Optional:
 - `value` (String, Sensitive) The value itself, which the state keeps.
 - `value_wo` (String, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The value itself, write-only: neither the plan nor the state keeps it, with Terraform 1.11 or later, from an ephemeral resource for instance. Terraform can't compare it: change `value_wo_version` to give a new one.
 - `value_wo_version` (String) Changed, the next apply gives `value_wo` again.
+
+
+<a id="nestedatt--installations--external"></a>
+### Nested Schema for `installations.external`
+
+Optional:
+
+- `outputs` (Attributes Map) The outputs it gives, by name, each read where Terraform runs, from one source, as a credential is. (see [below for nested schema](#nestedatt--installations--external--outputs))
+
+<a id="nestedatt--installations--external--outputs"></a>
+### Nested Schema for `installations.external.outputs`
+
+Optional:
+
+- `command` (String) A command, whose output is the value.
+- `env` (String) An environment variable.
+- `path` (String) A file.
+- `value` (String, Sensitive) The value itself, which the state keeps.
+- `value_wo` (String, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) The value itself, write-only: neither the plan nor the state keeps it, with Terraform 1.11 or later, from an ephemeral resource for instance. Terraform can't compare it: change `value_wo_version` to give a new one.
+- `value_wo_version` (String) Changed, the next apply gives `value_wo` again.
+
 
 
 

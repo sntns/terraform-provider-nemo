@@ -42,6 +42,24 @@ func expandStack(ctx context.Context, model nemoStackResourceModel, diags *diag.
 		manifest.Remote = "oci:" + absolute(layout, directory)
 	}
 	for _, installation := range model.Installations {
+		if installation.External != nil {
+			outputs := map[string]valuesource.Source{}
+			for name, source := range installation.External.Outputs {
+				if read := expandSource(&source, directory); read != nil {
+					outputs[name] = *read
+				}
+			}
+			manifest.Installations = append(manifest.Installations, storage.InstallationSpec{
+				Name:        installation.Name.ValueString(),
+				Stack:       manifest.Name,
+				Bundle:      storage.BundleReference{Repository: installation.Repository.ValueString(), Version: installation.Version.ValueString(), File: installation.File.ValueString()},
+				Parameters:  expandStrings(ctx, installation.Parameters, diags),
+				Credentials: expandCredentials(installation.Credentials, directory),
+				Override:    installation.Override.ValueString(),
+				External:    &storage.External{Outputs: outputs},
+			})
+			continue
+		}
 		file := installation.File.ValueString()
 		if file != "" {
 			file = absolute(file, directory)
@@ -146,6 +164,9 @@ func copyWriteOnly(plan *nemoStackResourceModel, config nemoStackResourceModel) 
 	for i := range plan.Installations {
 		if i < len(config.Installations) {
 			copySources(plan.Installations[i].Credentials, config.Installations[i].Credentials)
+			if planned, configured := plan.Installations[i].External, config.Installations[i].External; planned != nil && configured != nil {
+				copySources(planned.Outputs, configured.Outputs)
+			}
 		}
 	}
 }

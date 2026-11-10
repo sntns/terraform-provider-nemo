@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/sntns/terraform-provider-nemo/compare/v0.4.0...v0.5.0) (2026-11-10)
+
+
+### Features
+
+* an installation provided outside the stack, which gives its outputs ([ea9c0b4](https://github.com/sntns/terraform-provider-nemo/commit/ea9c0b4afe82d3ed22113f4f5a6c69e8796352b2))
+* run stacks with nemo 0.13.0, whose bundles give outputs to their dependants ([be5328c](https://github.com/sntns/terraform-provider-nemo/commit/be5328c2035cb8560bfc0bc84683115964b3a6a0))
+
 ## [0.4.0](https://github.com/sntns/terraform-provider-nemo/compare/v0.3.0...v0.4.0) (2026-11-04)
 
 

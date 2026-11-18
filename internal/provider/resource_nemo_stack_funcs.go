@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/sntns/nemo/pkg/credentials"
+	"github.com/sntns/nemo/pkg/installer"
 	"github.com/sntns/nemo/pkg/nemo"
 	"github.com/sntns/nemo/pkg/progress"
 	"github.com/sntns/nemo/pkg/runtime"
@@ -89,8 +90,13 @@ func installedOn(ctx context.Context, manifest stack.Stack) (_ []storage.Install
 // refreshInstallations brings the model to the installations its target
 // has: it drops those uninstalled, sets the version deployed of those that
 // give one, and adds those Terraform does not know. A stack just imported
-// gets its target and installer from them too.
+// gets its target and installer from them too. Those nemo gives the objects
+// its bundles share are left out: it derives them from the bundles, so a
+// configuration can't list them.
 func refreshInstallations(ctx context.Context, model *nemoStackResourceModel, present []storage.Installation, diags *diag.Diagnostics) {
+	present = slices.DeleteFunc(slices.Clone(present), func(installation storage.Installation) bool {
+		return sharedInstallation(installation.Name)
+	})
 	if model.Installations == nil && len(present) > 0 {
 		model.Target = flattenTarget(ctx, present[0].Target, diags)
 		model.Installer = flattenInstaller(present[0].Installer)
@@ -123,6 +129,14 @@ func refreshInstallations(ctx context.Context, model *nemoStackResourceModel, pr
 	}
 	model.Installations = installations
 	model.ID = model.Name
+}
+
+// sharedInstallation tells whether nemo named the installation after an
+// object the stack's bundles share: network.NAME, volume.NAME…
+func sharedInstallation(name string) bool {
+	return slices.ContainsFunc([]string{"networks", "volumes", "configs", "secrets"}, func(group string) bool {
+		return strings.HasPrefix(name, installer.SharedInstallation(group, ""))
+	})
 }
 
 // encodeManifest writes the manifest, its values redacted as nemo's records

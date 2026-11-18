@@ -149,7 +149,8 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 		MarkdownDescription: "A stack: bundles deployed together on one target, as nemo deploys a manifest with `nemo up`. " +
 			"Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, " +
 			"and uninstalls those it no longer lists. Reading it reads the records of its installations on the target, so that an installation " +
-			"nemo changed with `--force` shows in the next plan. Destroying it uninstalls every installation. " +
+			"nemo changed with `--force` shows in the next plan; those nemo gives the objects its bundles share, `network.NAME` or `volume.NAME`, " +
+			"are left out, nemo derives them from the bundles. Destroying it uninstalls every installation. " +
 			"A stack its target has already is imported, not created. " +
 			"Planning loads the bundles it installs or upgrades, from their registry, layout or `bundle.json`: " +
 			"one that is not there, or is another installation's, fails the plan rather than the apply.\n\n" +

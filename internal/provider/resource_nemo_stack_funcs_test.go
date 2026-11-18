@@ -48,21 +48,36 @@ func TestRefreshInstallations(t *testing.T) {
 	assert.True(t, model.Installations[0].Version.IsNull(), "a file gives its own version: the plan has none to compare")
 }
 
-func TestRefreshInstallations_shared(t *testing.T) {
+func TestRefreshInstallations_objects(t *testing.T) {
 	t.Parallel()
 	var diags diag.Diagnostics
 	model := nemoStackResourceModel{Name: types.StringValue("shop"), Installations: []nemoStackInstallationModel{
 		{Name: types.StringValue("api"), Version: types.StringValue("1.0.0")},
-		{Name: types.StringValue("network.shop"), Version: types.StringValue("1.0.0")},
+		{Name: types.StringValue("network.shop_mesh"), Version: types.StringValue("1.0.0")},
 	}}
-	network := installation("network.shop", "1.0.0")
-	network.Bundle = storage.BundleReference{Version: "1.0.0"}
-	refreshInstallations(context.Background(), &model, []storage.Installation{installation("api", "1.0.0"), network, installation("volume.data", "1.0.0")}, &diags)
+	mesh, data := storage.Object{Kind: storage.KindNetwork, Name: "shop_mesh"}, storage.Object{Kind: storage.KindVolume, Name: "shop_data"}
+	api, web := installation("api", "1.0.0"), installation("web", "1.0.0")
+	api.Status.Objects, web.Status.Objects = []storage.Object{data, mesh}, []storage.Object{mesh}
+	network := installation("network.shop_mesh", "1.0.0")
+	network.Bundle, network.Object = storage.BundleReference{Version: "1.0.0"}, &mesh
+	refreshInstallations(context.Background(), &model, []storage.Installation{api, network, web}, &diags)
 	require.False(t, diags.HasError(), diags)
 	assert.Equal(t, []nemoStackInstallationModel{
 		{Name: types.StringValue("api"), Version: types.StringValue("1.0.0")},
-	}, model.Installations, "nemo derives the installations of the shared objects from the bundles: a state that has them loses them, a refresh adds none")
-	assert.False(t, sharedInstallation("networking"), "a bundle's name is not one of a shared object's")
+		{Name: types.StringValue("web"), Repository: types.StringValue("registry.example.com/web"), Version: types.StringValue("1.0.0"), File: types.StringNull(), Parameters: types.MapNull(types.StringType)},
+	}, model.Installations, "the installation nemo makes for a shared network is no bundle: a state that has it loses it, a refresh adds none")
+
+	var objects []struct {
+		Kind  string   `tfsdk:"kind"`
+		Name  string   `tfsdk:"name"`
+		Users []string `tfsdk:"users"`
+	}
+	require.False(t, model.Objects.ElementsAs(context.Background(), &objects, false).HasError())
+	assert.Equal(t, []struct {
+		Kind  string   `tfsdk:"kind"`
+		Name  string   `tfsdk:"name"`
+		Users []string `tfsdk:"users"`
+	}{{"volume", "shop_data", []string{"api"}}, {"network", "shop_mesh", []string{"api", "web"}}}, objects, "one user or several, every object alike")
 }
 
 func TestRefreshInstallations_imported(t *testing.T) {

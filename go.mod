@@ -1,6 +1,6 @@
 module github.com/sntns/terraform-provider-nemo
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/cnabio/cnab-go v0.26.5
@@ -13,7 +13,7 @@ require (
 	github.com/hashicorp/terraform-plugin-log v0.11.0
 	github.com/hashicorp/terraform-plugin-testing v1.16.0
 	github.com/moby/moby/client v0.6.2
-	github.com/sntns/nemo v0.14.0
+	github.com/sntns/nemo v0.15.0
 	github.com/stretchr/testify v1.12.1
 )
 

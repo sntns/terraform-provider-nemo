@@ -11,6 +11,7 @@ import (
 
 	"github.com/cnabio/cnab-go/secrets/host"
 	"github.com/cnabio/cnab-go/valuesource"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
@@ -239,6 +240,25 @@ func flattenInstaller(installer target.Installer) *nemoStackInstallerModel {
 		model.Kubernetes = &nemoStackKubernetesModel{Namespace: optionalString(kubernetes.Namespace), Kubeconfig: optionalString(kubernetes.Kubeconfig)}
 	}
 	return model
+}
+
+// objectAttributes are the attributes of an object of the stack.
+var objectAttributes = map[string]attr.Type{"kind": types.StringType, "name": types.StringType, "users": types.ListType{ElemType: types.StringType}}
+
+// flattenObjects are the objects the installations declare, each with
+// those that use it.
+func flattenObjects(objects []storage.ObjectUse, diags *diag.Diagnostics) types.List {
+	elements := make([]attr.Value, 0, len(objects))
+	for _, object := range objects {
+		users, found := types.ListValueFrom(context.Background(), types.StringType, object.Users)
+		diags.Append(found...)
+		value, found := types.ObjectValue(objectAttributes, map[string]attr.Value{"kind": types.StringValue(object.Kind), "name": types.StringValue(object.Name), "users": users})
+		diags.Append(found...)
+		elements = append(elements, value)
+	}
+	list, found := types.ListValue(types.ObjectType{AttrTypes: objectAttributes}, elements)
+	diags.Append(found...)
+	return list
 }
 
 // flattenInstallation is an installation Terraform does not know: its

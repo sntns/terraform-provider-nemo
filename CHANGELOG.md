@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/sntns/terraform-provider-nemo/compare/v0.5.1...v0.6.0) (2026-11-18)
+
+
+### Features
+
+* a stack's objects, each with the installations that use it, whether one or several ([ab0f942](https://github.com/sntns/terraform-provider-nemo/commit/ab0f942a70930f47b91413ac0b9620005ff94009))
+
 ## [0.5.1](https://github.com/sntns/terraform-provider-nemo/compare/v0.5.0...v0.5.1) (2026-11-18)
 
 

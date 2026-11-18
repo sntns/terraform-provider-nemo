@@ -172,7 +172,7 @@ func (r *nemoStackListResource) listed(ctx context.Context, req list.ListRequest
 	// Attribute by attribute: those left out, such as timeouts, stay null.
 	for name, value := range map[string]any{
 		"id": model.ID, "name": model.Name, "target": model.Target, "installer": model.Installer, "installations": model.Installations,
-		"purge_on_destroy": model.PurgeOnDestroy, "content_hash": model.ContentHash, "manifest": model.Manifest,
+		"purge_on_destroy": model.PurgeOnDestroy, "content_hash": model.ContentHash, "manifest": model.Manifest, "objects": model.Objects,
 	} {
 		result.Diagnostics.Append(result.Resource.SetAttribute(ctx, path.Root(name), value)...)
 	}

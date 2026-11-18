@@ -109,6 +109,7 @@ func TestNemoStackResourceModel_state(t *testing.T) {
 	state := tfsdk.State{Schema: resp.Schema}
 	given := shop()
 	given.Timeouts = timeouts.Value{Object: types.ObjectNull(resp.Schema.Attributes["timeouts"].GetType().(timeouts.Type).AttrTypes)}
+	given.Objects = flattenObjects([]storage.ObjectUse{{Object: storage.Object{Kind: storage.KindNetwork, Name: "shop_mesh"}, Users: []string{"api", "web"}}}, &diag.Diagnostics{})
 	diags := state.Set(ctx, &given)
 	require.False(t, diags.HasError(), diags)
 	var read nemoStackResourceModel

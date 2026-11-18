@@ -48,6 +48,23 @@ func TestRefreshInstallations(t *testing.T) {
 	assert.True(t, model.Installations[0].Version.IsNull(), "a file gives its own version: the plan has none to compare")
 }
 
+func TestRefreshInstallations_shared(t *testing.T) {
+	t.Parallel()
+	var diags diag.Diagnostics
+	model := nemoStackResourceModel{Name: types.StringValue("shop"), Installations: []nemoStackInstallationModel{
+		{Name: types.StringValue("api"), Version: types.StringValue("1.0.0")},
+		{Name: types.StringValue("network.shop"), Version: types.StringValue("1.0.0")},
+	}}
+	network := installation("network.shop", "1.0.0")
+	network.Bundle = storage.BundleReference{Version: "1.0.0"}
+	refreshInstallations(context.Background(), &model, []storage.Installation{installation("api", "1.0.0"), network, installation("volume.data", "1.0.0")}, &diags)
+	require.False(t, diags.HasError(), diags)
+	assert.Equal(t, []nemoStackInstallationModel{
+		{Name: types.StringValue("api"), Version: types.StringValue("1.0.0")},
+	}, model.Installations, "nemo derives the installations of the shared objects from the bundles: a state that has them loses them, a refresh adds none")
+	assert.False(t, sharedInstallation("networking"), "a bundle's name is not one of a shared object's")
+}
+
 func TestRefreshInstallations_imported(t *testing.T) {
 	t.Parallel()
 	var diags diag.Diagnostics

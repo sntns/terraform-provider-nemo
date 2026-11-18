@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/sntns/terraform-provider-nemo/compare/v0.5.0...v0.5.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* a stack's plan leaves out the installations of its shared objects ([51714f6](https://github.com/sntns/terraform-provider-nemo/commit/51714f60f17dc596387e320aba8f2ac833cf96e0))
+
 ## [0.5.0](https://github.com/sntns/terraform-provider-nemo/compare/v0.4.0...v0.5.0) (2026-11-10)
 
 

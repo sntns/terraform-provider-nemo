@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.1](https://github.com/sntns/terraform-provider-nemo/compare/v0.6.0...v0.6.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* a credential's new value no longer fails the apply on the stack's objects ([0aec26b](https://github.com/sntns/terraform-provider-nemo/commit/0aec26bea38c1a8bbe13939ef2b08207d2059cb6))
+* a plan shows the objects a stack will have, and only those it adds or removes ([ca28659](https://github.com/sntns/terraform-provider-nemo/commit/ca286590c7df4a818e1c9aa2967accf0833d99f1))
+* build with OpenTelemetry 1.47.0, which fixes GO-2026-6974 ([a5a0b69](https://github.com/sntns/terraform-provider-nemo/commit/a5a0b69340424f715517491ffe881d1d7b0f5009))
+
 ## [0.6.0](https://github.com/sntns/terraform-provider-nemo/compare/v0.5.1...v0.6.0) (2026-11-18)
 
 

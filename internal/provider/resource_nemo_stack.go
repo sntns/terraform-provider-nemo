@@ -151,7 +151,7 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 			"Each apply brings the stack to its configuration: it installs the bundles it lists, upgrades those installed, " +
 			"and uninstalls those it no longer lists. Reading it reads the records of its installations on the target, so that an installation " +
 			"nemo changed with `--force` shows in the next plan. The networks, volumes, configs and secrets the installations declare are in `objects`, " +
-			"whether one installation uses each or several share it. Destroying it uninstalls every installation. " +
+			"whether one installation uses each or several share it, and a plan shows those the apply adds or removes. Destroying it uninstalls every installation. " +
 			"A stack its target has already is imported, not created. " +
 			"Planning loads the bundles it installs or upgrades, from their registry, layout or `bundle.json`: " +
 			"one that is not there, or is another installation's, fails the plan rather than the apply.\n\n" +
@@ -263,7 +263,10 @@ func (r *nemoStackResource) Schema(ctx context.Context, _ resource.SchemaRequest
 			"objects": schema.ListNestedAttribute{
 				MarkdownDescription: "The networks, volumes, configs and secrets the installations declare on the target, by kind then name, " +
 					"each with the installations that use it: one, or several that share it, alike. Read from nemo's records, " +
-					"as of each installation's last install or upgrade.",
+					"as of each installation's last install or upgrade. A plan works them out as `nemo up` plans before it acts, " +
+					"so that it shows those the apply adds or removes, and only those. They are known after apply only when " +
+					"the configuration itself is, or when a credential's value or a `bundle.json` changed since the last apply, " +
+					"as `content_hash` is: the apply reads them anew.",
 				Computed: true,
 				NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
 					"kind":  schema.StringAttribute{MarkdownDescription: "`network`, `volume`, `config` or `secret`.", Computed: true},
@@ -479,7 +482,7 @@ func (r *nemoStackResource) Create(ctx context.Context, req resource.CreateReque
 	if err := up(ctx, manifest, plan.PurgeOnDestroy.ValueBool()); err != nil {
 		resp.Diagnostics.AddError("nemo stack create failed", err.Error())
 	}
-	plan.Objects = objectsAfter(ctx, manifest, &resp.Diagnostics)
+	plan.Objects = objectsAfter(ctx, manifest, plan.Objects, &resp.Diagnostics)
 	// Saved even when an action failed: the stack is tainted, and the next apply replaces it.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	setIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
@@ -556,7 +559,7 @@ func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateReque
 		resp.Diagnostics.AddError("nemo stack update failed", err.Error())
 		return
 	}
-	plan.Objects = objectsAfter(ctx, manifest, &resp.Diagnostics)
+	plan.Objects = objectsAfter(ctx, manifest, plan.Objects, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	setIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
 }
@@ -565,7 +568,8 @@ func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateReque
 // the plan gives, so that a bundle rebuilt at the same path, or a value
 // changed behind its source, changes the plan, and loads the bundles the
 // plan installs anew, so that one that is not there fails the plan rather
-// than the apply. When that hash changed, the objects are known after apply.
+// than the apply. Then it works out the objects the apply will leave, so
+// that the plan shows those it adds or removes, and only those.
 func (r *nemoStackResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if req.Plan.Raw.IsNull() {
 		return
@@ -593,13 +597,34 @@ func (r *nemoStackResource) ModifyPlan(ctx context.Context, req resource.ModifyP
 	}
 	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), hash)...)
 	checkBundles(ctx, planned, manifest, expandStack(ctx, r.connection.over(current), &ignored), &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-	// What the apply reads anew, the credentials and the bundle files, may
-	// change the objects even with the configuration unchanged, a secret
-	// named after its content among them: they are known once it read them.
+	// The objects the apply will leave. When what the apply reads anew, the
+	// credentials and the bundle files, changed since the last apply, a
+	// secret named after its content among them, they are known once it read
+	// them, even with the configuration unchanged. Else the plan works them
+	// out as nemo up plans, which the plan Terraform makes again when it
+	// applies works out alike.
 	if hash.IsUnknown() {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("objects"), types.ListUnknown(types.ObjectType{AttrTypes: objectAttributes}))...)
+		return
 	}
+	if !planned.Objects.IsUnknown() {
+		return
+	}
+	var config nemoStackResourceModel
+	if req.Config.Get(ctx, &config).HasError() {
+		return
+	}
+	copyWriteOnly(&planned, config)
+	objects, err := plannedObjects(ctx, expandStack(ctx, r.connection.over(planned), &ignored))
+	if err != nil {
+		resp.Diagnostics.AddWarning("nemo stack objects known after apply", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("objects"), flattenObjects(objects, &resp.Diagnostics))...)
 }
 
 func (r *nemoStackResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

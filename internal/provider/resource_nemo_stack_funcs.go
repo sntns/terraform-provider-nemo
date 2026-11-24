@@ -86,12 +86,27 @@ func installedOn(ctx context.Context, manifest stack.Stack) (_ []storage.Install
 	return present, err
 }
 
-// objectsAfter reads the objects of the stack once an apply ran: none, with
-// a warning, when its records can't be read.
-func objectsAfter(ctx context.Context, manifest stack.Stack, diags *diag.Diagnostics) types.List {
+// plannedObjects works out the objects the stack will have once an apply
+// brought it to its manifest, as nemo up plans before it acts.
+func plannedObjects(ctx context.Context, manifest stack.Stack) (objects []storage.ObjectUse, err error) {
+	err = withNemo(func(api *nemo.Nemo) error {
+		plan, err := api.Plan(ctx, nemo.UpRequest{Stack: manifest})
+		objects = plan.Objects
+		return err
+	})
+	return objects, err
+}
+
+// objectsAfter reads the objects of the stack once an apply ran. When its
+// records can't be read, they are those the plan worked out, else none,
+// with a warning.
+func objectsAfter(ctx context.Context, manifest stack.Stack, planned types.List, diags *diag.Diagnostics) types.List {
 	present, err := installedOn(ctx, manifest)
 	if err != nil {
 		diags.AddWarning("nemo stack objects unread", err.Error())
+		if !planned.IsUnknown() && !planned.IsNull() {
+			return planned
+		}
 	}
 	return flattenObjects(storage.Objects(present), diags)
 }

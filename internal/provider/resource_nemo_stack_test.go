@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -300,16 +301,58 @@ func TestAccNemoStack_planChecks(t *testing.T) {
 	})
 }
 
+// The plan shows the objects the apply will leave, and only their changes:
+// none for a parameter alone, a volume an override adds then removes, a
+// network a second installation comes to share. A plan that adds or removes
+// a bundle.json leaves them to the apply, as content_hash. Each apply leaves
+// the objects its plan showed, which the next plan, empty, reads again.
+func TestAccNemoStack_objects(t *testing.T) {
+	name := "tf-acc-objects"
+	hello, bonjour := objectsBundles(t)
+	t.Setenv("TF_ACC_NEMO_GREETING", "hello")
+	config := func(timeout, override, others string) string {
+		return fmt.Sprintf(loadTestConfiguration(t, "nemo_stack", "testAccNemoStack_objects"), name, target.Compose, timeout, hello, override, others)
+	}
+	withBonjour := fmt.Sprintf("{ name = %q, file = %q },", "bonjour", bonjour)
+	network := func(users ...string) knownvalue.Check { return objectOf("network", name+"_default", users...) }
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy: func(state *terraform.State) error {
+			// The volume an override declared, then no longer: the upgrade kept it, and a purge removes only those still declared.
+			api, err := runtime.Connect(target.Target{})
+			if err != nil {
+				return err
+			}
+			defer api.Close()
+			_, err = api.VolumeRemove(context.Background(), name+"_data", client.VolumeRemoveOptions{})
+			return errors.Join(checkNemoStackDestroyed(name)(state), err)
+		},
+		Steps: []resource.TestStep{
+			{Config: config("5m", "null", ""), ConfigStateChecks: objectsStored(network("hello"))},
+			{Config: config("6m", "null", ""), ConfigPlanChecks: objectsPlanned(network("hello")), ConfigStateChecks: objectsStored(network("hello"))},
+			{
+				Config:            config("6m", strconv.Quote("services:\n  web:\n    volumes: [data:/data]\nvolumes:\n  data: {}\n"), ""),
+				ConfigPlanChecks:  objectsPlanned(objectOf("volume", name+"_data", "hello"), network("hello")),
+				ConfigStateChecks: objectsStored(objectOf("volume", name+"_data", "hello"), network("hello")),
+			},
+			{Config: config("6m", "null", ""), ConfigPlanChecks: objectsPlanned(network("hello")), ConfigStateChecks: objectsStored(network("hello"))},
+			{Config: config("6m", "null", withBonjour), ConfigPlanChecks: objectsKnownAfterApply(), ConfigStateChecks: objectsStored(network("bonjour", "hello"))},
+			{Config: config("7m", "null", withBonjour), ConfigPlanChecks: objectsPlanned(network("bonjour", "hello")), ConfigStateChecks: objectsStored(network("bonjour", "hello"))},
+			{Config: config("7m", "null", ""), ConfigPlanChecks: objectsKnownAfterApply(), ConfigStateChecks: objectsStored(network("hello"))},
+		},
+	})
+}
+
 // On Swarm, a secret is an object named after the hash of its content: a
-// value changed behind its source, the configuration unchanged, leaves the
-// stack's objects to the apply, which reads that value anew and renames the
-// secret.
+// plan shows it, a value changed behind its source leaves it to the apply,
+// which reads that value anew, and a plan shows it removed.
 func TestAccNemoStack_objectsOnSwarm(t *testing.T) {
 	name := "tf-acc-objects-swarm"
-	hello, err := filepath.Abs(filepath.Join("..", "..", "testdata", "bundles", "hello", "bundle.json"))
-	require.NoError(t, err)
-	config := func(override string) string {
-		return fmt.Sprintf(loadTestConfiguration(t, "nemo_stack", "testAccNemoStack_objects"), name, target.Swarm, "5m", hello, override, "")
+	hello, _ := objectsBundles(t)
+	config := func(timeout, override string) string {
+		return fmt.Sprintf(loadTestConfiguration(t, "nemo_stack", "testAccNemoStack_objects"), name, target.Swarm, timeout, hello, override, "")
 	}
 	greeting := strconv.Quote("services:\n  web:\n    secrets: [greeting]\nsecrets:\n  greeting:\n    environment: GREETING\n")
 	network := objectOf("network", name+"_default", "hello")
@@ -324,16 +367,17 @@ func TestAccNemoStack_objectsOnSwarm(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				PreConfig:         func() { t.Setenv("TF_ACC_NEMO_GREETING", "hello") },
-				Config:            config(greeting),
+				Config:            config("5m", greeting),
 				ConfigStateChecks: append(objectsStored(network, secret), renamed.AddStateValue("nemo_stack.test", secretName)),
 			},
+			{Config: config("6m", greeting), ConfigPlanChecks: objectsPlanned(network, secret), ConfigStateChecks: objectsStored(network, secret)},
 			{
 				PreConfig:         func() { t.Setenv("TF_ACC_NEMO_GREETING", "bonjour") },
-				Config:            config(greeting),
+				Config:            config("6m", greeting),
 				ConfigPlanChecks:  objectsKnownAfterApply(),
 				ConfigStateChecks: append(objectsStored(network, secret), renamed.AddStateValue("nemo_stack.test", secretName)),
 			},
-			{Config: config("null"), ConfigStateChecks: objectsStored(network)},
+			{Config: config("6m", "null"), ConfigPlanChecks: objectsPlanned(network), ConfigStateChecks: objectsStored(network)},
 		},
 	})
 }
@@ -352,6 +396,29 @@ func testAccSwarmPreCheck(t *testing.T) {
 	}
 }
 
+// objectsBundles are the test bundle, hello, and a copy of it, bonjour,
+// whose service is api: two installations of a stack, which share its
+// default network.
+func objectsBundles(t *testing.T) (string, string) {
+	t.Helper()
+	hello, err := filepath.Abs(filepath.Join("..", "..", "testdata", "bundles", "hello", "bundle.json"))
+	require.NoError(t, err)
+	data, err := os.ReadFile(hello)
+	require.NoError(t, err)
+	var document map[string]any
+	require.NoError(t, json.Unmarshal(data, &document))
+	document["name"] = "bonjour"
+	project := document["custom"].(map[string]any)["io.nemo.compose"].(map[string]any)["compose"].([]any)[0].(map[string]any)["config"].(map[string]any)
+	services := project["services"].(map[string]any)
+	services["api"] = services["web"]
+	delete(services, "web")
+	data, err = json.Marshal(document)
+	require.NoError(t, err)
+	bonjour := filepath.Join(t.TempDir(), "bundle.json")
+	require.NoError(t, os.WriteFile(bonjour, data, 0o600))
+	return hello, bonjour
+}
+
 // objectOf checks an object of the stack: its kind, its name unless empty,
 // and its users.
 func objectOf(kind, name string, users ...string) knownvalue.Check {
@@ -364,6 +431,15 @@ func objectOf(kind, name string, users ...string) knownvalue.Check {
 		checks = append(checks, knownvalue.StringExact(user))
 	}
 	return knownvalue.ObjectExact(map[string]knownvalue.Check{"kind": knownvalue.StringExact(kind), "name": named, "users": knownvalue.ListExact(checks)})
+}
+
+// objectsPlanned checks that the plan updates the stack and shows the
+// objects it will have.
+func objectsPlanned(objects ...knownvalue.Check) resource.ConfigPlanChecks {
+	return resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+		plancheck.ExpectResourceAction("nemo_stack.test", plancheck.ResourceActionUpdate),
+		plancheck.ExpectKnownValue("nemo_stack.test", tfjsonpath.New("objects"), knownvalue.ListExact(objects)),
+	}}
 }
 
 // objectsKnownAfterApply checks that the plan updates the stack and leaves

@@ -565,7 +565,7 @@ func (r *nemoStackResource) Update(ctx context.Context, req resource.UpdateReque
 // the plan gives, so that a bundle rebuilt at the same path, or a value
 // changed behind its source, changes the plan, and loads the bundles the
 // plan installs anew, so that one that is not there fails the plan rather
-// than the apply.
+// than the apply. When that hash changed, the objects are known after apply.
 func (r *nemoStackResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if req.Plan.Raw.IsNull() {
 		return
@@ -593,6 +593,13 @@ func (r *nemoStackResource) ModifyPlan(ctx context.Context, req resource.ModifyP
 	}
 	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("content_hash"), hash)...)
 	checkBundles(ctx, planned, manifest, expandStack(ctx, r.connection.over(current), &ignored), &resp.Diagnostics)
+
+	// What the apply reads anew, the credentials and the bundle files, may
+	// change the objects even with the configuration unchanged, a secret
+	// named after its content among them: they are known once it read them.
+	if hash.IsUnknown() {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("objects"), types.ListUnknown(types.ObjectType{AttrTypes: objectAttributes}))...)
+	}
 }
 
 func (r *nemoStackResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

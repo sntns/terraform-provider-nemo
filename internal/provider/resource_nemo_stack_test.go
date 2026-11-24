@@ -10,13 +10,18 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"testing"
 
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-testing/compare"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
+	"github.com/hashicorp/terraform-plugin-testing/statecheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -293,4 +298,84 @@ func TestAccNemoStack_planChecks(t *testing.T) {
 			{Config: config("testAccNemoStack_checks_missing"), PlanOnly: true, ExpectError: regexp.MustCompile(`nemo stack bundle unreadable`)},
 		},
 	})
+}
+
+// On Swarm, a secret is an object named after the hash of its content: a
+// value changed behind its source, the configuration unchanged, leaves the
+// stack's objects to the apply, which reads that value anew and renames the
+// secret.
+func TestAccNemoStack_objectsOnSwarm(t *testing.T) {
+	name := "tf-acc-objects-swarm"
+	hello, err := filepath.Abs(filepath.Join("..", "..", "testdata", "bundles", "hello", "bundle.json"))
+	require.NoError(t, err)
+	config := func(override string) string {
+		return fmt.Sprintf(loadTestConfiguration(t, "nemo_stack", "testAccNemoStack_objects"), name, target.Swarm, "5m", hello, override, "")
+	}
+	greeting := strconv.Quote("services:\n  web:\n    secrets: [greeting]\nsecrets:\n  greeting:\n    environment: GREETING\n")
+	network := objectOf("network", name+"_default", "hello")
+	secret := objectOf("secret", "", "hello")
+	secretName := tfjsonpath.New("objects").AtSliceIndex(1).AtMapKey("name")
+	renamed := statecheck.CompareValue(compare.ValuesDiffer())
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t); testAccSwarmPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             checkNemoStackDestroyed(name),
+		Steps: []resource.TestStep{
+			{
+				PreConfig:         func() { t.Setenv("TF_ACC_NEMO_GREETING", "hello") },
+				Config:            config(greeting),
+				ConfigStateChecks: append(objectsStored(network, secret), renamed.AddStateValue("nemo_stack.test", secretName)),
+			},
+			{
+				PreConfig:         func() { t.Setenv("TF_ACC_NEMO_GREETING", "bonjour") },
+				Config:            config(greeting),
+				ConfigPlanChecks:  objectsKnownAfterApply(),
+				ConfigStateChecks: append(objectsStored(network, secret), renamed.AddStateValue("nemo_stack.test", secretName)),
+			},
+			{Config: config("null"), ConfigStateChecks: objectsStored(network)},
+		},
+	})
+}
+
+// testAccSwarmPreCheck skips a test that needs the environment's Docker to
+// be a swarm manager.
+func testAccSwarmPreCheck(t *testing.T) {
+	t.Helper()
+	api, err := runtime.Connect(target.Target{})
+	require.NoError(t, err)
+	defer api.Close()
+	info, err := api.Info(context.Background(), client.InfoOptions{})
+	require.NoError(t, err)
+	if !info.Info.Swarm.ControlAvailable {
+		t.Skip("the environment's Docker is not a swarm manager")
+	}
+}
+
+// objectOf checks an object of the stack: its kind, its name unless empty,
+// and its users.
+func objectOf(kind, name string, users ...string) knownvalue.Check {
+	var named knownvalue.Check = knownvalue.NotNull()
+	if name != "" {
+		named = knownvalue.StringExact(name)
+	}
+	checks := make([]knownvalue.Check, 0, len(users))
+	for _, user := range users {
+		checks = append(checks, knownvalue.StringExact(user))
+	}
+	return knownvalue.ObjectExact(map[string]knownvalue.Check{"kind": knownvalue.StringExact(kind), "name": named, "users": knownvalue.ListExact(checks)})
+}
+
+// objectsKnownAfterApply checks that the plan updates the stack and leaves
+// its objects to the apply.
+func objectsKnownAfterApply() resource.ConfigPlanChecks {
+	return resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+		plancheck.ExpectResourceAction("nemo_stack.test", plancheck.ResourceActionUpdate),
+		plancheck.ExpectUnknownValue("nemo_stack.test", tfjsonpath.New("objects")),
+	}}
+}
+
+// objectsStored checks the objects the state has after the apply.
+func objectsStored(objects ...knownvalue.Check) []statecheck.StateCheck {
+	return []statecheck.StateCheck{statecheck.ExpectKnownValue("nemo_stack.test", tfjsonpath.New("objects"), knownvalue.ListExact(objects))}
 }

@@ -135,6 +135,8 @@ jobs:
         run: |
           echo "TF_ACC_TERRAFORM_PATH=$(which tofu)" >> "$GITHUB_ENV"
           echo "TF_ACC_PROVIDER_HOST=registry.opentofu.org" >> "$GITHUB_ENV"
+      - name: Make the runner's Docker a swarm manager, for the stacks on Swarm
+        run: docker swarm init
       - name: Deploy, import and destroy stacks on the runner's Docker, with ${{ matrix.cli }}
         run: make testacc
 

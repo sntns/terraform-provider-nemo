@@ -44,7 +44,7 @@ Each credential has one source:
 | `value` | the configuration | the value, as a sensitive attribute |
 | `value_wo` | the configuration, write-only | nothing |
 
-`path`, `env` and `command` keep the secret out of Terraform: it is read at each plan and each action, on the machine that runs them, and the state keeps only a hash of it, in `content_hash`. A value changed behind the same source, a key rotated in the same variable, changes that hash: the next plan shows an update of the stack, and the apply deploys the new value. A command whose output changes at every run, a token minted at each call, plans an update every time. Prefer them when the secret is there already, in a file a CI job mounts, or behind a command of your secret manager.
+`path`, `env` and `command` keep the secret out of Terraform: it is read at each plan and each action, on the machine that runs them, and the state keeps only a hash of it, in `content_hash`. A value changed behind the same source, a key rotated in the same variable, changes that hash: the next plan shows an update of the stack, and the apply deploys the new value. On Swarm, the secret is named after the hash of its content: a new value is a new secret, so that plan leaves the stack's `objects` to the apply, which reads the value anew. A command whose output changes at every run, a token minted at each call, plans an update every time. Prefer them when the secret is there already, in a file a CI job mounts, or behind a command of your secret manager.
 
 `value` is the simplest, from a variable or another resource's attribute, but the state then keeps the secret: keep the state encrypted.
 
